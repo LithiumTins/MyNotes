@@ -813,3 +813,116 @@ type (expr);
 | 运算符 | 功能 | 用法 | 结合律 |
 | --- | --- | --- | --- |
 | `,` | 逗号 | `expr, expr` | 左 |
+
+<br><br>
+
+# 语句
+
+## 简单语句
+一个表达式后面加分号就形成**表达式语句**，它求值并丢弃结果。
+
+#### 空语句
+仅有一个分号，它什么也不做。
+
+#### 复合语句
+即用花括号括起来的语句和声明的序列，又称**块**。
+
+## 语句作用域
+可以在 `if` 、 `switch` 、 `while` 、 `for` 语句的控制结构中定义变量，这些变量只在相应的语句内可见，如：
+```cpp
+while (int i = get_num())
+    cout << i << endl;
+i = 0;                      // 错误：i在这里不可见
+```
+
+## 条件语句
+
+### switch语句
+
+#### switch内部的变量定义
+在不使用花括号的情况下，如果在一个 `case` 标签中定义了一个变量，那么它的作用域实际上是从定义开始到 `switch` 语句结束。这可能导致 `switch` 语句跳过这条定义语句。
+
+C++标准规定，不允许跨过变量的初始化语句直接跳转到该变量的作用域内的另一个位置。这条规定实际上允许变量先声明，而在后面才初始化，只要初始化语句在最后的 `case` 标签中或者 `default` 标签中即可。
+
+这对 `switch` 语句内的变量定义是比较苛刻的约束，比如需要在第二个标签定义一个变量而后续标签不需要使用它，这样的情况下，可以使用花括号来限制变量的作用域，如：
+```cpp
+case 1:
+    {
+        int i = 0;
+        // ...
+    }
+    break;
+```
+这样 `i` 的作用域就不会覆盖到后续的标签。
+
+## 迭代语句
+
+### 范围for语句
+C++11引入了范围for语句，可以用来遍历一个序列，如：
+```cpp
+vector<int> v = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+for (auto &r : v)
+    r *= 2;
+```
+`r` 在每次迭代都会重新定义，并初始化成序列中的下一个元素。这段代码等价于：
+```cpp
+for (auto beg = v.begin(), end = v.end(); beg != end; ++beg) {
+    auto &r = *beg;
+    r *= 2;
+}
+```
+
+## 跳转语句
+
+### goto语句
+跟[上述情况](#switch内部的变量定义)类似，向下跳转不允许跨过某个变量的初始化；回向的跳转越过变量的定义则相当于销毁变量再重新定义，这是允许的。
+
+## try语句块和异常处理
+
+### throw表达式
+如：
+```cpp
+throw runtime_error("error message");
+```
+构造异常类可以使用string或者C风格字符串。
+
+### try语句块
+```cpp
+try {
+    program-statements
+} catch (exception-declaration) {
+    handler-statements
+} catch (exception-declaration) {
+    handler-statements
+} // ...
+```
+这里 `exception-declaration` 称作**异常声明**，一般形式如：
+```cpp
+catch (runtime_error err)
+```
+如果某个 `catch` 子句被选中，那么执行对应的 `handler-statements` ，然后继续执行整个 `try` 语句块之后的语句。
+
+#### 编写处理代码
+所有的异常类都提供了名为 `what()` 成员函数，它返回一个 `const char*` 指针。对于携带额外信息的异常类，如 `runtime_error` 可以用它来获取用来构造异常对象的string包含的信息。对于不携带额外信息的异常类，如 `exception` ， `what()` 返回的内容由编译器决定。
+
+#### 函数在寻找处理代码的过程中退出
+在一个函数中，如果一个异常被抛出而没有被任何 `catch` 语句匹配，那么终止这个函数并在上级函数继续寻找 `catch` 语句。如果在 `main` 函数中也没有找到，那么程序转入标准库的 `terminate` 函数，它的行为和系统有关，一般来说这个函数会导致程序非正常退出。
+
+### 标准异常
+异常类定义在4个头文件中：
+- `exception` ：定义了最通用的异常类 `exception` ，它只报告异常的发生，不包含任何额外信息
+- `stdexcept` ：定义了几个常用的异常类，具体有：
+    - `exception` ：最常见的问题
+    - `runtime_error` ：只有在运行时才能检测到的问题
+    - `range_error` ：运行时错误，生成的结果超出了有意义的值域范围
+    - `overflow_error` ：运行时错误，计算上溢
+    - `underflow_error` ：运行时错误，计算下溢
+    - `logic_error` ：程序逻辑错误
+    - `domain_error` ：逻辑错误，参数对应的结果值不存在
+    - `invalid_argument` ：逻辑错误，无效参数
+    - `length_error` ：逻辑错误，试图创建一个超出该类型最大长度的对象
+    - `out_of_range` ：逻辑错误，使用一个超出有效范围的值
+- `new` ：定义了 `bad_alloc` 异常
+- `typeinfo` ：定义了 `bad_cast` 异常
+
+`exception` 、 `bad_alloc` 、 `bad_cast` 只能默认初始化。其他的异常则必须提供异常信息。
