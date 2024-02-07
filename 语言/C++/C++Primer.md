@@ -1373,7 +1373,7 @@ public:
     double daily_tbl[period];
 };
 ```
-当程序只会用到该静态成员的值时，编译器可以替换掉它的所有出现，此时不需要在类的外部定义它。如果不能替换，如传递给一个接收引用的函数，此时需要左值，就需要在类的外部定义它。由于类内已经提供了初始值，类外定义时不允许再次提供初始值：
+当程序只会用到该静态成员（原书提到的是对于const或constexpr static的成员，不太能确切理解）的值时，编译器可以替换掉它的所有出现，此时不需要在类的外部定义它。如果不能替换，如传递给一个接收引用的函数，此时需要左值，就需要在类的外部定义它。由于类内已经提供了初始值，类外定义时不允许再次提供初始值：
 ```cpp
 constexpr int Account::period;
 ```
@@ -1381,3 +1381,139 @@ constexpr int Account::period;
 
 #### 静态成员能用于某些场景，而普通成员不能
 静态成员可以是不完全类型，甚至可以是类本身的类型。静态成员可以作为默认实参，普通成员不能。
+
+# IO库
+
+## IO类
+头文件 `iostream` ：
+- `istream` 和 `wistream` ：从流中读取数据
+- `ostream` 和 `wostream` ：向流中写入数据
+- `iostream` 和 `wiostream` ：读写流
+
+头文件 `fstream` ：
+- `ifstream` 和 `wifstream` ：从文件中读取数据
+- `ofstream` 和 `wofstream` ：向文件中写入数据
+- `fstream` 和 `wfstream` ：读写文件
+
+头文件 `sstream` ：
+- `istringstream` 和 `wistringstream` ：从string中读取数据
+- `ostringstream` 和 `wostringstream` ：向string中写入数据
+- `stringstream` 和 `wstringstream` ：读写string
+
+这里以 `w` 开头的类是对宽字符的支持，读写的是 `wchar_t` 类型。对于 `cin` 、 `cout` 和 `cerr` ，对应的宽字符版本是 `wcin` 、 `wcout` 和 `wcerr` 。
+
+`ifstream` 和 `istringstream` 是继承自 `istream` 的，`ofstream` 和 `ostringstream` 是继承自 `ostream` 的。
+
+### IO对象无拷贝或赋值
+IO对象不能拷贝或赋值，所以也不能把它们作为参数或返回值，一般需要以引用的方式传递。读写IO对象会改变其状态，所以它们不能是 `const` 引用。
+
+### 条件状态
+IO类定义了一些函数和状态，帮助访问和操纵流的**条件状态**（以下strm表示IO类型）：
+- `strm::iostate` ：一个机器相关的类型，用于表示完整的条件状态
+- `strm::badbit` ：流已崩溃
+- `strm::failbit` ：IO操作失败
+- `strm::eofbit` ：流到达文件结束
+- `strm::goodbit` ：流未处于错误状态则为0
+- `s.eof()` ：`eofbit` 置位则返回 `true`
+- `s.fail()` ：`failbit` 或 `badbit` 置位则返回 `true`
+- `s.bad()` ：`badbit` 置位则返回 `true`
+- `s.good()` ：流处于有效状态则返回 `true`
+- `s.clear()` ：所有条件状态复位，流状态设置为有效，返回 `void`
+- `s.clear(flags)` ： `flags` 是 `iostate` 类型，把 `s` 中对应的状态位复位，返回 `void`
+- `s.setstate(flags)` ： `flags` 是 `iostate` 类型，把 `s` 中对应的状态位置位，返回 `void`
+- `s.rdstate()` ：返回 `s` 的当前状态，为 `iostate` 类型
+
+如果 `cin` 的读操作失败，或者读到了文件结尾，那么它就会进入错误状态，后续所有的IO操作都会失败。最简单的检测流状态的方法是：
+```cpp
+while (cin >> word)
+{
+    // 状态ok：读操作成功
+}
+```
+
+#### 查询流的状态
+上述的方式只能知道流失败却不知为何，需要检查流的条件状态。四个状态位是 `iostate` 类型的 `constexpr` 值，可以用位运算符的方式一次检测或设置多个状态位。对于四个状态位的解释是：
+- `badbit` ：系统级错误，流无法再使用
+- `failbit` ：可恢复错误，如读取的类型与预期不符等
+- `eofbit` ：流到达文件结束，同时 `failbit` 
+- `goodbit` ：为0则表示流处于有效状态
+
+#### 管理输出缓冲
+输出流都有缓冲区，一般导致缓冲刷新的原因有：
+- 程序正常结束，作为main函数的返回操作的一部分
+- 缓冲区满
+- 使用 `endl` 操纵符显式执行
+- 用操纵符 `unitbuf` 来设置流的内部状态，使得缓冲区在每个输出操作之后刷新。默认情况下， `cerr` 是设置 `unitbuf` 的，所以它的输出是立即刷新的。
+- 一个输出流可能被关联到另一个流，当读写被关联的流时，输出流的缓冲区会被刷新。默认情况下， `cin` 和 `cerr` 都关联到 `cout` 上，它们的读写操作会刷新 `cout` 的缓冲区。
+
+#### 刷新输出缓冲区
+- `endl` ：完成换行并刷新缓冲区
+- `flush` ：刷新缓冲区，但不输出任何额外字符
+- `ends` ：向流插入一个空字符，然后刷新缓冲区
+
+#### unitbuf操纵符
+如果希望在每次输出操作后都刷新缓冲区，可以使用 `unitbuf` 操纵符，如：
+```cpp
+cout << unitbuf;       // 所有输出操作后都刷新缓冲区
+cout << nounitbuf;     // 回到正常的缓冲方式
+```
+
+#### 关联输入和输出流
+`tie` 成员函数有两个重载版本：
+- 不带参数，返回当前关联的输出流，如果没有关联则返回 `nullptr`
+- 接受一个指向 `ostream` 的指针，将自己关联到这个 `ostream` 上
+
+## 文件输出输出
+除了继承自 `iostream` 的行为，还增加了一些用来管理文件的成员，有：
+```cpp
+fstream fstrm;              // 创建一个未绑定的文件流
+fstream fstrm(s);           // 创建一个fstream并打开名为s的文件，s可以是string或者C风格字符串，两个构造函数都是explicit的。默认文件模式依赖于fstream对象的类型
+fstream fstrm(s, mode);     // 文件模式由mode指定
+fstrm.open(s);              // 打开名为s的文件并绑定到fstrm，s可以是string或者C风格字符串，默认文件模式依赖于fstream对象的类型。返回void
+fstrm.open(s, mode);        // 文件模式由mode指定
+fstrm.close();              // 关闭与fstrm关联的文件，返回void
+fstrm.is_open();            // 返回一个bool值，指出与fstrm关联的文件是否成功打开，并且仍未关闭
+```
+这里文件名支持string对象，这是C++11的新特性。
+
+### 使用文件流对象
+
+#### 成员函数open和close
+如果文件打开失败，流的 `failbit` 会被置位，可以用 `if` 语句简单地检查流的状态。当文件已经打开，再次对该流调用 `open` 会失败并导致 `failbit` 置位，需要先调用 `close` 关闭文件。 `open` 成功的话会设置流的状态使得 `good()` 返回 `true` 。
+
+#### 自动构造和析构
+当一个流对象离开作用域时，它的析构函数会自动调用 `close` 关闭文件。
+
+### 文件模式
+每个流都有一个关联的**文件模式**，指出如何使用文件，它们定义在类中，具体有以下几种模式：
+- `in` ：以读方式打开
+- `out` ：以写方式打开
+- `app` ：每次写操作前均定位到文件末尾
+- `ate` ：打开文件后立即定位到文件末尾
+- `trunc` ：截断文件
+- `binary` ：以二进制方式进行IO
+
+指定文件模式有一些限制：
+- 只有 `ofstream` 或 `fstream` 可以设定 `out`
+- 只有 `ifstream` 或 `fstream` 可以设定 `in`
+- 设定 `trunc` 必须也设定 `out`
+- `trunc` 和 `app` 不能同时设定。 `app` 隐含 `out` 。
+- `out` 默认会截断文件。同时设定 `app` 会追加至文件末尾，同时设置 `in` 进行读写操作。
+- `ate` 和 `binary` 没什么限制
+
+不同的文件流有不同的默认文件模式：
+- `ifstream` 默认是 `in`
+- `ofstream` 默认是 `out`
+- `fstream` 默认是 `in | out`
+
+## string流
+除了继承自 `iostream` 的行为，还增加了一些用来管理string的成员，有：
+```cpp
+sstream sstrm;              // 创建一个未绑定的string流
+sstream sstrm(s);           // 创建一个sstream，保存一个string s的副本
+sstrm.str();                // 返回保存的string副本的拷贝
+sstrm.str(s);               // 用s的副本替换保存的string副本。返回void
+```
+
+### 使用ostringstream
+它把输出的数据存储在内置的string对象中，可以用 `str` 成员函数来获取这个string对象。
