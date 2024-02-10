@@ -1517,3 +1517,358 @@ sstrm.str(s);               // 用s的副本替换保存的string副本。返回
 
 ### 使用ostringstream
 它把输出的数据存储在内置的string对象中，可以用 `str` 成员函数来获取这个string对象。
+
+<br><br>
+
+# 顺序容器
+为程序员提供了控制元素存储和访问顺序的能力，这种顺序不依赖于元素的值，而是与元素加入容器时的位置有关。
+
+## 顺序容器概述
+顺序容器有以下几种：
+- `vector` ：可变大小数组。支持快速随机访问。在尾部之外的位置插入或删除元素可能很慢。
+- `deque` ：双端队列。支持快速随机访问。在头尾位置插入或删除元素很快。
+- `list` ：双向链表。只支持双向顺序访问。在任何位置插入或删除元素都很快。
+- `forward_list` ：单向链表。只支持单向顺序访问。在链表任何位置插入或删除元素都很快。
+- `array` ：固定大小数组。支持快速随机访问。不能添加或删除元素。
+- `string` ：与 `vector` 类似的容器，但专门用于保存字符。随机访问快。在尾部插入或删除元素快。
+
+这里的 `forward_list` 和 `array` 是C++11新增的。
+
+#### 确定使用哪种顺序容器
+以下是一些选择容器的基本原则：
+- 除非有很好的理由选择其他容器，否则应该使用 `vector`
+- 元素小并且在意空间开销，就不要使用 `list` 或 `forward_list`
+- 需要随机访问，应使用 `vector` 或 `deque`
+- 需要在中间插入或删除元素，应使用 `list` 或 `forward_list`
+- 需要在头尾插入或删除元素，但不会在中间插入或删除元素，应使用 `deque`
+- 只在读取输入时需要在中间插入元素，其后进行随机访问，则
+    - 如果只是为了保持有序而在中间插入元素，应考虑使用 `vector` 在结尾插入，结合 `sort` 算法来排序
+    - 如果必须在中间插入元素，考虑在插入时使用 `list` ，然后拷贝到 `vector` 中
+
+## 容器库概览
+一般来说，每个容器都定义在一个同名头文件中。
+
+#### 对容器可以保存的元素类型的限制
+因为允许容器的构造函数有一个只接受元素数目的版本，如果元素是类类型，则会使用它的默认构造函数。然而有的类没有默认构造函数，可以使用顺序容器来存储它，但是不能使用上述方式创建容器。
+
+#### 所有容器类型的共同操作
+- 类型别名：
+    - `iterator` ：此容器类型的迭代器类型
+    - `const_iterator` ：可以读取元素，但不能修改元素的迭代器类型
+    - `size_type` ：无符号整型，足以保存该容器的最大可能大小
+    - `difference_type` ：有符号整型，足以保存两个迭代器之间的距离
+    - `value_type` ：元素类型
+    - `reference` ：元素的左值类型；与 `value_type &` 等价
+    - `const_reference` ：元素的 `const` 左值类型；与 `const value_type &` 等价
+- 构造函数
+    - `C c` ：默认构造函数，构造空容器
+    - `C c1(c2)` ：拷贝构造函数，构造 `c2` 的副本 `c1`
+    - `C c(b, e)` ：构造函数，构造 `c` 并用迭代器 `b` 和 `e` 之间的元素拷贝到 `c` 中
+    - `C c{a, b, c}` ：列表初始化
+- 赋值与swap
+    - `c1 = c2` ：将 `c1` 中的元素替换为 `c2` 中的元素
+    - `c1 = {a, b, c}` ：将 `c1` 中的元素替换为列表中的元素
+    - `a.swap(b)` ：交换 `a` 和 `b` 中的元素
+    - `swap(a, b)` ：同上
+- 大小
+    - `c.size()` ： `c` 中元素的数目
+    - `c.max_size()` ： `c` 可保存的最大元素数目
+    - `c.empty()` ： 如果 `c` 中存储了元素则返回 `false` ，否则返回 `true`
+- 插入和删除（不适用于 `array` ，且在不同的容器中这些接口有所不同）
+    - `c.insert(args)` ：将 `args` 插入到 `c` 中
+    - `c.emplace(inits)` ：用 `inits` 在 `c` 中直接构造一个元素
+    - `c.erase(args)` ：删除 `args` 指定的元素
+    - `c.clear()` ：删除 `c` 中的所有元素，返回 `void`
+- 关系运算符
+    - `==` 、 `!=` ：相等性判断（所有容器都支持）
+    - `<` 、 `<=` 、 `>` 、 `>=` ：关系判断（无序关联容器不支持）
+- 获取迭代器
+    - `c.begin()` ：返回指向 `c` 的首元素的迭代器
+    - `c.end()` ：返回指向 `c` 末尾元素的下一个位置的迭代器
+    - `c.cbegin()` ：返回指向 `c` 的首元素的 `const` 迭代器
+    - `c.cend()` ：返回指向 `c` 末尾元素的下一个位置的 `const` 迭代器
+- 反向容器的额外成员（不支持 `forward_list` ）
+    - `reverse_iterator` ：按逆序寻址元素的迭代器
+    - `const_reverse_iterator` ：不能修改元素的逆序迭代器
+    - `c.rbegin()` ：返回指向 `c` 的尾元素的迭代器
+    - `c.rend()` ：返回指向 `c` 首元素的前一个位置的迭代器
+    - `c.crbegin()` ：返回指向 `c` 的尾元素的 `const` 迭代器
+    - `c.crend()` ：返回指向 `c` 首元素的前一个位置的 `const` 迭代器
+
+## 迭代器
+
+### begin和end成员
+它们有多个版本，如：
+```
+a.begin();
+a.rbegin();
+a.cbegin();
+a.crbegin();
+```
+其中不以 `c` 开头的都是重载成员函数，它们根据 `this` 指针是否含有底层 `const` 来决定实际调用哪个函数。 `c` 开头的函数来自于C++11新标准。
+
+### 容器定义和初始化
+```cpp
+C C;                // 默认构造函数。如果C是array，则C中的元素被默认初始化；否则C为空
+C c1(c2);           // 拷贝构造函数。c1是c2的副本，它们需要是同一种类型
+C c1 = c2;          // 同上
+C c{a, b, c};       // c初始化为初始化列表中元素的拷贝，列表中元素的类型必须与C的元素类型相容。初始值的数量必须小于或等于array的大小，没有提供初始值的元素被值初始化。
+C c = {a, b, c};    // 同上
+C c(b, e);          // c初始化为迭代器b和e之间的元素，范围中元素的类型需要与C的元素类型相容（array不适用）
+// 只有顺序容器（不含array）支持以下初始化方式
+C c(n);             // c包含n个元素，每个元素都是C的默认初始化值，此构造函数是explicit的（string不适用）
+C c(n, t);          // c包含n个元素初始化为值t的元素
+```
+
+#### 标准库array具有固定大小
+array的定义方式：
+```cpp
+array<int, 42> a1;          // 默认初始化，a1中的元素被默认初始化
+array<int, 10> a2 = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};    // 列表初始化
+array<int, 10> a3 = {42};    // a3[0] = 42，后续的元素为0
+```
+内置类型的数组不可以进行拷贝，而array可以，需要保证类型和大小都相同。
+
+### 赋值和swap
+所有的容器都支持赋值操作，总共有以下的操作方式：
+```cpp
+c1 = c2;          // c1中的元素替换为c2中的元素的拷贝。c1和c2必须是相同类型的容器
+c = {a, b, c};    // c中的元素替换为列表中的元素的拷贝（array不适用）
+swap(c1, c2);     // 交换c1和c2中的元素。c1和c2必须是相同类型的容器
+c1.swap(c2);      // 同上
+// assign操作不适用于关联容器和array
+seq.assign(b, e);    // 用迭代器b和e之间的元素替换seq中的元素。迭代器不能指向seq中的元素
+seq.assign(il);      // 用列表il中的元素替换seq中的元素
+seq.assign(n, t);    // 用n个值为t的元素替换seq中的元素
+```
+为了保证给出初始值的数量是正确的，array不支持使用列表和 `assign` 赋值。
+
+#### 使用swap
+对 `array` 使用 `swap` 的时候，它会真正地交换元素，所以效率不高。对于其他容器， `swap` 只是交换了内部数据结构，所以效率很高。值得一提的是，对于 `string` 来说，调用 `swap` 会使得迭代器、引用和指针失效，而对于其他容器则不会。
+
+### 容器大小操作
+一般有三个操作， `size` 、 `max_size` 和 `empty` 。其中 `forward_list` 不支持 `size` 操作，其他容器都支持。
+
+### 关系运算符
+所有容器都支持 `==` 和 `!=` 运算符。除了无序关联容器都支持 `<` 、 `<=` 、 `>` 和 `>=` 运算符。
+
+#### 容器的关系运算符使用元素的关系运算符完成比较
+相等关系使用元素的 `==` 进行比较，其他关系使用元素的 `<` 进行比较。
+
+## 顺序容器操作
+
+### 向顺序容器添加元素
+除了 `array` ，其他的容器都有动态内存管理功能，可以运行时添加删除元素。以下是添加元素的操作：
+```cpp
+// forward_list有自己专有版本的insert和emplace
+c.push_back(t);             // 在c的尾部创建一个值为t的元素。返回void（forward_list不支持）
+c.emplace_back(inits);      // 用inits在c的尾部直接构造一个元素。返回void（forward_list不支持）
+c.push_front(t);            // 在c的头部创建一个值为t的元素。返回void（vector和string不支持）
+c.emplace_front(inits);     // 用inits在c的头部直接构造一个元素。返回void（vector和string不支持）
+c.insert(p, t);             // 在迭代器p指向的元素之前创建一个值为t的元素。返回指向新添加元素的迭代器
+c.emplace(p, inits);        // 用inits在迭代器p指向的元素之前直接构造一个元素。返回指向新添加元素的迭代器
+c.insert(p, n, t);          // 在迭代器p指向的元素之前创建n个值为t的元素。返回指向第一个新添加元素的迭代器。如果n为0，则返回p
+c.insert(p, b, e);          // 在迭代器p指向的元素之前创建迭代器b和e之间的元素。返回指向第一个新添加元素的迭代器。如果b和e相等，则返回p
+c.insert(p, il);            // 在迭代器p指向的元素之前创建列表il中的元素。返回指向第一个新添加元素的迭代器。如果il为空，则返回p
+```
+在 `string` 和 `vector` 除了尾部的任何位置，或是 `deque` 的首尾之外的任何位置，插入元素都会引起元素的移动，从而导致迭代器失效。
+
+向 `string` 和 `vector` 添加元素还可能引起整个对象存储空间重新分配。
+
+#### 插入范围内元素
+C++11中，接受元素个数或范围的 `insert` 返回指向第一个新加入元素的迭代器。（以前返回 `void` ）
+
+#### 使用emplace操作
+`emplace` 、 `emplace_back` 和 `emplace_front` 都是C++11引入的，它们不拷贝元素，而是直接在对应的位置调用构造函数来构造新元素。
+
+### 访问元素
+所有顺序容器都有 `front` 成员函数，除了 `forward_list` 之外的顺序容器都有 `back` 成员函数。 使用它们之前务必确保容器不为空。顺序容器中访问元素的操作：
+```cpp
+c.back();       // 返回c中尾元素的引用。c不能为空
+c.front();      // 返回c中首元素的引用。c不能为空
+// 以下操作只适用于string、vector、deque和array
+c[n];           // 返回c中下标为n的元素的引用。n是无符号整数且不能超过c.size()
+c.at(n);        // 返回c中下标为n的元素的引用。数组越界则抛出out_of_range异常
+```
+
+### 删除元素
+顺序容器的删除操作（除array）：
+```cpp
+// forward_list有特殊版本的erase
+c.pop_back();       // 删除c中的尾元素。c不能为空。返回void（forward_list不支持）
+c.pop_front();      // 删除c中的首元素。c不能为空。返回void（vector和string不支持）
+c.erase(p);         // 删除迭代器p指向的元素。返回指向p之后位置的迭代器。p不能是尾后迭代器
+c.erase(b, e);      // 删除迭代器b和e之间的元素。返回指向e之后位置的迭代器。如果e本身就是尾后迭代器，则返回尾后迭代器
+c.clear();          // 删除c中的所有元素。返回void
+```
+删除 `deque` 中除首尾位置之外的任何位置的元素都会使所有迭代器、引用和指针失效。
+
+删除 `string` 和 `vector` 中元素会使指向删除点之后的元素的迭代器、引用和指针失效。
+
+### 特殊的forward_list操作
+插入或删除的操作：
+```cpp
+lst.before_begin();             // 返回指向首元素之前的元素的迭代器，不能解引用
+lst.cbefore_begin();            // 返回指向首元素之前的元素的const迭代器，不能解引用
+
+// 以下插入操作，p不能为尾后迭代器，都返回指向插入的最后一个元素的迭代器
+lst.insert_after(p, t);         // 在迭代器p指向的元素之后创建一个值为t的元素。
+lst.insert_after(p, n, t);      // 在迭代器p指向的元素之后创建n个值为t的元素。
+lst.insert_after(p, b, e);      // 在迭代器p指向的元素之后创建迭代器b和e之间的元素。如果b和e相等，则返回p。b和e不能指向lst中的元素
+lst.emplace_after(p, inits);    // 用inits在迭代器p指向的元素之后直接构造一个元素。
+
+// 以下删除操作，p不能指向最后一个元素或为尾后迭代器。返回指向被删除元素之后的元素的迭代器，如果没有这个元素则返回尾后迭代器
+lst.erase_after(p);             // 删除迭代器p指向的元素之后的元素
+lst.erase_after(b, e);          // 删除迭代器b和e之间的元素。b和e指向的元素都不被删除
+```
+
+### 改变容器大小
+顺序容器大小操作（不适用于array）：
+```cpp
+c.resize(n);            // 调整c的大小为n个元素，如果n小于c.size()，多余的元素被丢弃；如果n大于c.size()，则在c的尾部插入值初始化的元素
+c.resize(n, t);         // 如果新添加元素，那么初始化为t
+```
+如果 `resize` 缩小函数，则指向被删除元素的迭代器、引用和指针都会失效。
+
+对 `vector` 、 `string` 或 `deque` 使用 `resize` 可能导致迭代器、引用和指针失效。
+
+### 容器操作可能使迭代器失效
+向容器添加元素后：
+- `vector` 和 `string` ，如果引起了内存重新分配，所有指向容器的迭代器、引用和指针都会失效；否则指向插入点之后的才会失效
+- `deque` ，插入到除首尾位置之外的任何位置都会使所有迭代器、引用和指针失效。在首尾插入时，迭代器失效，但引用和指针不会失效
+- `list` 和 `forward_list` ，不会失效
+
+删除元素后：
+- `list` 和 `forward_list` ，不会失效
+- `deque` ，除了在首尾位置删除，所有的迭代器、引用和指针都会失效。如果在尾部删除，只有尾后迭代器会失效；如果在首部删除，则不会失效。
+- `vector` 和 `string` ，指向被删除元素之前的迭代器、引用和指针仍有效。
+
+标准库的 `end()` 操作很快。因此，如果需要向容器插入或删除元素，不要保存 `end()` 的返回值，而是每次都重新获取。
+
+## vector对象是如何增长的
+`string` 和 `vector` 类似，每次分配的内存不够时就重新分配更大的内存，一般会超出目前需要的内存做提前分配，具体分配多少视实现而定。
+
+#### 管理容量的成员函数
+`vector` 和 `string` 提供了一些成员让程序员可以与内存分配策略互动：
+```cpp
+c.capacity();       // 如果不重新分配内存，c可以保存多少元素
+c.reserve(n);       // 保证c至少能保存n个元素，如果不够则重新分配内存
+c.shrink_to_fit();  // 请求c将capacity减少为size大小
+```
+`shrink_to_fit` 是C++11新增的，同时适用于 `deque` ，实现可以忽略这个请求。
+
+## 额外的string操作
+
+### 构造string的其他方法
+除了前面介绍的构造函数，以及与其他顺序容器相同的构造函数， `string` 还有以下几种构造函数：
+```cpp
+string s(cp, n);            // s是字符数组cp的前n个字符的拷贝，n不能超过cp的长度
+string s(s2, pos2);         // s是string s2从下标pos2开始的字符的拷贝。pos2不应该大于s2.size()，否则抛出out_of_range异常。
+string s(s2, pos2, len2);   // s是string s2从下标pos2开始的len2个字符的拷贝。拷贝不会超过s2的末尾。pos2不应该大于s2.size()，否则抛出out_of_range异常。
+```
+
+#### substr操作
+子字符串操作：
+```cpp
+s.substr(pos = 0, n = s.size() - pos);       // 返回一个string，包含s中从下标pos开始的n个字符的拷贝。
+```
+
+### 改变string的其他方法
+```cpp
+s.insert(pos, args);        // 在pos之前插入args。pos可以是下标或迭代器。下标版本返回指向s的引用，迭代器版本返回指向第一个插入字符的迭代器
+s.erase(pos, len);          // 删除从pos开始的len个字符。pos同上。len可以省略，此时删除到结尾的所有字符。返回一个指向s的引用
+s.assign(args);             // 用args替换s中的字符。返回一个指向s的引用
+s.append(args);             // 在s的末尾添加args。返回一个指向s的引用
+s.replace(range, args);     // 用args替换range中的字符。range可以是下标加一个长度，或者一对迭代器。返回一个指向s的引用
+```
+完整地说， `args` 的形式以及不同的成员可以使用的形式如下表：
+| `args` | `append` 和 `assign` | `replace(pos, len, args)` | `replace(b, e, args)` | `insert(pos, args)` | `insert(iter, args)` |
+| :-: | :-: | :-: | :-: | :-: | :-: |
+| `str` | o | o | o | o | |
+| `str, pos, len` | o | o | | o | |
+| `cp, len` | o | o | o | o | |
+| `cp` | o | o | o | | |
+| `n, c` | o | o | o | o | o |
+| `b2, e2` | o | | o | | o |
+| 初始化列表 | o | | o | | o |
+
+### string搜索操作
+搜索函数返回的待搜索对象出现的下标位置，它是 `string::size_type` 类型，如果没有找到则返回名为 `string::npos` 的 `static` 成员。标准库将 `string::npos` 定义为 `const string::size_type` 类型并初始化为 `-1` ，转换为无符号类型实际上就是最大可能的值。
+
+支持的搜索函数如下：
+```cpp
+s.find(args);                   // 查找s中args第一次出现的位置
+s.rfind(args);                  // 查找s中args最后一次出现的位置
+s.find_first_of(args);          // 查找s中args中任何一个字符第一次出现的位置
+s.find_last_of(args);           // 查找s中args中任何一个字符最后一次出现的位置
+s.find_first_not_of(args);      // 查找s中第一个不在args中的字符的位置
+s.find_last_not_of(args);       // 查找s中最后一个不在args中的字符的位置
+```
+以上的 `args` 必须是如下形式之一：
+- `c, pos` ：从 `s` 中位置 `pos` 开始查找字符 `c` 。 `pos` 默认为0
+- `s2, pos` ：从 `s` 中位置 `pos` 开始查找 `string s2` 。 `pos` 默认为0
+- `cp, pos` ：从 `s` 中位置 `pos` 开始查找C风格字符串 `cp` 。 `pos` 默认为0
+- `cp, pos, n` ：从 `s` 中位置 `pos` 开始查找C风格字符串 `cp` 的前 `n` 个字符。 `pos` 和 `n` 没有默认值
+
+### compare函数
+类似于 `strcmp` ， `string` 也提供了 `compare` 接口，相等返回0，大于返回正数，小于返回负数。它可以接受以下的参数：
+- `s2` ： `s` 与 `s2` 比较
+- `pos1, n1, s2` ： `s` 从 `pos1` 开始的 `n1` 个字符与 `s2` 比较
+- `pos1, n1, s2, pos2, n2` ： `s` 从 `pos1` 开始的 `n1` 个字符与 `s2` 从 `pos2` 开始的 `n2` 个字符比较
+- `cp` ： `s` 与C风格字符串 `cp` 比较
+- `pos1, n1, cp` ： `s` 从 `pos1` 开始的 `n1` 个字符与C风格字符串 `cp` 比较
+- `pos1, n1, cp, n2` ： `s` 从 `pos1` 开始的 `n1` 个字符与C风格字符串 `cp` 的前 `n2` 个字符比较
+
+### 数值转换
+C++11引入了多个函数来支持数值数据和 `string` 之间的转换，如果 `string` 转换为一个数值，则会抛出 `invalid_argument` 异常；如果转换后的数值无法用任何类型表示，则会抛出 `out_of_range` 异常。以下是这些函数：
+```cpp
+to_string(val);             // 浮点类型、int和更大的整型都有对应的重载版本。小整型会被提升。
+
+// 将s从开头到p的子串按b进制解释为整数，p默认为0，b默认为10
+stoi(s, p, b);              // 返回int类型
+stol(s, p, b);              // 返回long类型
+stoul(s, p, b);             // 返回unsigned long类型
+stoll(s, p, b);             // 返回long long类型
+stoull(s, p, b);            // 返回unsigned long long类型
+
+// 将s从开头到p的子串解释为浮点数
+stof(s, p);                 // 返回float类型
+stod(s, p);                 // 返回double类型
+stold(s, p);                // 返回long double类型
+```
+
+## 容器适配器
+**适配器**指的是让某种事物的行为看起来像另一种事物一样，比如可以在 `vector` 上模拟一个栈的行为。标准库有三种适配器，分别是 `stack` 、 `queue` 和 `priority_queue` 。它们有一些通用的操作和类型
+- `size_type` ：一种类型，足以保存当前类型的最大对象的大小
+- `value_type` ：元素类型
+- `container_type` ：实现适配器的底层容器类型
+- `A a` ：创建一个名为 `a` 的空适配器
+- `A a(c)` ：创建一个名为 `a` 的适配器，带有容器 `c` 的一个拷贝
+- 关系运算符：所有适配器都支持所有关系运算符
+- `a.empty()` ：如果 `a` 中没有元素则返回 `true` ，否则返回 `false`
+- `a.size()` ：返回 `a` 中元素的数目
+- `a.swap(b)` 或 `swap(a, b)` ：交换 `a` 和 `b` 中的元素。 `a` 和 `b` 必须是相同类型的适配器，且底层容器类型必须相同
+
+#### 定义一个适配器
+不同的适配器可以使用的底层容器类型：
+- `stack` ：需要支持 `back` 、 `push_back` 、 `pop_back` 操作，则可以使用除了 `array` 和 `forward_list` 之外的任何顺序容器
+- `queue` ：需要支持 `back` 、 `push_back` 、 `front` 、 `pop_front` 操作，则可以使用 `list` 和 `deque`
+- `priority_queue` ：除了 `stack` 的需求，还需要随机访问，所以只能使用 `vector` 和 `deque`
+
+#### 栈适配器
+`stack` 定义在 `stack` 头文件中，默认基于 `deque` 实现。它独有的操作有：
+- `s.pop()` ：删除 `s` 的顶部元素。返回 `void`
+- `s.push(item)` ：通过拷贝或移动 `item` ，在栈顶创建一个新的元素
+- `s.emplace(args)` ：通过 `args` 直接构造一个新的元素在栈顶
+- `s.top()` ：返回栈顶元素但不出栈。
+
+#### 队列适配器
+`queue` 和 `priority_queue` 定义在 `queue` 头文件中， `deque` 默认基于 `deque` 实现， `priority_queue` 默认基于 `vector` 实现。它们独有的操作有：
+- `q.pop()` ：弹出 `queue` 的首元素或 `priority_queue` 的最高优先级元素，不返回该元素。
+- `q.front()` ：返回 `queue` 的首元素或 `priority_queue` 的最高优先级元素，但不删除它。
+- `q.back()` ：只适用于 `queue` ，返回 `queue` 的尾元素，但不删除它。
+- `q.top()` ：只适用于 `priority_queue` ，返回 `priority_queue` 的最高优先级元素，但不删除它。
+- `q.push(item)` ：在 `queue` 的尾部或 `priority_queue` 的合适位置插入一个新元素，值为 `item` 。
+- `q.emplace(args)` ：在 `queue` 的尾部或 `priority_queue` 的合适位置用 `args` 直接构造一个新元素。
+
+值得一提的是， `priority_queue` 默认是大顶堆。它使用元素上的运算符 `<` 来比较元素。
