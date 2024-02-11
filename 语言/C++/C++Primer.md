@@ -2204,3 +2204,233 @@ lst.unique(pred);           // 使用pred代替==运算符
 - `(p, lst2)` ：如果 `lst` 是 `list` ，则 `p` 需要指向 `lst` 中的一个元素（感觉尾后迭代器也可以），它会把 `lst2` 中的元素插入到 `lst` 中 `p` 所指向的元素之前；如果 `lst` 是 `forward_list` ，则 `p` 需要指向 `lst` 中的一个元素或首前迭代器，它会把 `lst2` 中的元素插入到 `p` 指向的位置之后。 `lst2`的类型必须和 `lst` 的类型相同，并且两者不能是同一个链表。
 - `(p, lst2, p2)` ：类似，但 `p2` 指向 `lst2` 中的一个元素，仅把该元素移动到 `lst` 。 `lst2` 和 `lst` 可以是同一个链表。
 - `(p, lst2, b, e)` ：类似，但 `b` 和 `e` 指定了 `lst2` 中的一个范围，把这个范围内的元素移动到 `lst` 。 `lst2` 和 `lst` 可以是同一个链表，但 `p` 不能指向给定区间中元素。
+
+<br><br>
+
+# 关联容器
+关联容器支持高效的关键字查找和访问，有以下的类型：
+- 按关键字有序保存元素：
+    - `map` ：关联数组；保存关键字-值对
+    - `set` ：关键字即值，即只保存关键字的容器
+    - `multimap` ：关键字可以重复出现的 `map`
+    - `multiset` ：关键字可以重复出现的 `set`
+- 无序集合：
+    - `unordered_map` ：使用哈希函数组织的 `map`
+    - `unordered_set` ：使用哈希函数组织的 `set`
+    - `unordered_multimap` ：使用哈希函数组织的 `multimap`
+    - `unordered_multiset` ：使用哈希函数组织的 `multiset`
+
+## 使用关联容器
+`map` 常被称为**关联数组**。
+
+## 关联容器概述
+关联容器都支持[普通容器操作](#所有容器类型的共同操作)。关联容器的迭代器都是双向的。
+
+### 定义关联容器
+可以默认初始化 `map` 和 `set` 。在C++11中，还可以使用列表初始化：
+```cpp
+set<string> exclude = {"The", "But", "And", "Or", "An", "A",
+                       "the", "but", "and", "or", "an", "a"};
+map<string, string> authors = {{"Joyce", "James"}, {"Austen", "Jane"},
+                               {"Dickens", "Charles"}};
+```
+
+### 初始化multimap和multiset
+`map` 和 `set` 都要求关键字是唯一的，而 `multimap` 和 `multiset` 则允许关键字重复。
+
+### 关键字类型的要求
+对于有序容器 `map` 、 `set` 、 `multimap` 和 `multiset` ，标准库使用运算符 `<` 来比较两个关键字，所以它必须支持这个运算符。或者也可以提供一个自定义比较操作。
+
+#### 有序容器的关键字类型
+比较操作必须定义一个**严格弱序**，即该函数必须具备如下性质：
+- 不能出现 `a < b && b < a` 为真
+- 如果 `a < b && b < c` 为真，则 `a < c` 也为真
+- 如果 `a < b` 为假且 `b < a` 为假，则 `a` 和 `b` 相等
+
+#### 使用关键字类型的比较函数
+如果需要给关联容器提供自定义的比较操作，可以在尖括号中传入该比较操作的类型，然后把对应的比较操作传递给构造函数，如：
+```cpp
+multiSet<string, decltype(compare)*> authors(compare);
+```
+
+### pair类型
+标准库类型 `pair` 定义在头文件 `utility` 中，其上有如下操作：
+```cpp
+pair<T1, T2> p;             // p是一个pair，它的两个成员分别是T1和T2类型，都进行值初始化
+pair<T1, T2> p(v1, v2);     // p的两个成员分别是v1和v2的拷贝
+pair<T1, T2> p = {v1, v2};  // 同上
+make_pair(v1, v2);          // 返回一个用v1和v2初始化的pair，具体类型通过v1和v2的类型推断
+p.first;                    // 返回p的第一个成员
+p.second;                   // 返回p的第二个成员
+p1 relop p2;                // 字典序比较，利用元素的 < 运算符
+p1 == p2;                   // 相等性比较，利用元素的 == 运算符
+p1 != p2;                   // 不等性比较，利用元素的 == 运算符
+```
+
+#### 创建pair对象的函数
+C++11以后，返回一个 `pair` 可以通过列表初始化来实现：
+```cpp
+pair<string, int> process(vector<string> &v)
+{
+    if (!v.empty())
+        return {v.back(), v.back().size()};
+    else
+        return pair<string, int>();
+}
+```
+在更早的C++中则必须显式构造一个 `pair` 。
+
+## 关联容器操作
+除了[共有的类型别名](#所有容器类型的共同操作)外，关联容器还有几个额外的类型别名：
+- `key_type` ：关键字类型
+- `mapped_type` ：每个关键字关联的类型，只适用于 `map`
+- `value_type` ：对于 `set` ，它和 `key_type` 相同；对于 `map` ，它是 `pair<const key_type, mapped_type>` 。
+
+### 关联容器迭代器
+解引用迭代器获得的是一个 `value_type` 类型的值。通过 `map` 的迭代器可以修改 `second` 成员，但不能修改 `first` 成员，因为 `first` 是 `const` 的。
+
+#### set的迭代器是const的
+`set` 只有 `const` 迭代器，不允许通过迭代器修改元素的值。
+
+#### 关联容器和算法
+通常不会对关联容器使用泛型算法。实际编程中，如果真的对关联容器使用泛型算法，常常把它当做一个源序列，或者绑定到一个插入迭代器上作为目的位置。
+
+### 添加元素
+
+#### 向map添加元素
+关联容器的 `insert` 相关操作有：
+```cpp
+// v是value_type类型的对象；args用来构造一个元素
+// 对于multimap和multiset，总会执行插入操作。返回指向新元素的迭代器
+// 对于map和set，只有关键字不存在时才会插入。返回pair，包含指向具有对应关键字的元素的迭代器和表示是否插入成功的bool值
+c.insert(v);
+c.emplace(args);
+
+// 类似，但迭代器p指出从哪里开始搜索新元素应该存储的位置（不懂）
+// 返回指向具有对应关键字的元素的迭代器
+c.insert(p, v);
+c.emplace(p, args);
+
+// b和e是一对迭代器，表示一个value_type类型的范围；il是一个初始化列表
+// 函数返回void
+// 对于map和set，只会插入范围中关键字仍不存在的元素；对于multimap和multiset，总是插入范围中所有元素
+c.insert(b, e);
+c.insert(il);
+```
+
+### 删除元素
+从关联容器删除元素的操作有：
+```cpp
+// 从c中删除所有关键字为k的元素，返回表示删除元素数量的size_type值
+c.erase(k);
+
+// 从c中删除迭代器p指向的元素，迭代器p必须实际指向某个元素。返回指向p之后位置的迭代器
+c.erase(p);
+
+// 删除迭代器对b和e指定范围内的元素，返回e
+c.erase(b, e);
+```
+
+### map的下标操作
+- `c[k]` ：返回关键字为 `k` 的元素的引用。如果 `k` 不在 `c` 中，会插入一个具有关键字 `k` 的元素，其值进行值初始化。
+- `c.at(k)` ：返回关键字为 `k` 的元素的引用。如果 `k` 不在 `c` 中，会抛出一个 `out_of_range` 异常。
+
+这两种操作仅适用于非 `const` 的 `map` 或 `unordered_map` 。
+
+### 访问元素
+在一个关联容器中查找元素的操作：
+```cpp
+// lower_bound和upper_bound不适用于无序容器
+
+// 返回指向首个关键字为k的元素的迭代器，如果该元素不存在则返回尾后迭代器
+c.find(k);
+
+// 返回关键字等于k的元素的数量
+c.count(k);
+
+// 返回指向首个关键字不小于k的元素的迭代器
+c.lower_bound(k);
+
+// 返回指向首个关键字大于k的元素的迭代器
+c.upper_bound(k);
+
+// 返回表示关键字等于k的元素范围的迭代器对形成的pair，如果范围为空则两个迭代器都是尾后迭代器
+c.equal_range(k);
+```
+在 `multimap` 和 `multiset` 中，找到关键字为 `k` 的全部元素比较麻烦，可以考虑使用 `equal_range` 。
+
+## 无序容器
+C++11定义了4个无序关联容器，它们不使用比较运算符来组织元素，而是使用哈希函数和 `==` 运算符。
+
+#### 管理桶
+无序容器提供了一组管理桶的函数，允许我们查询容器的状态以及在必要时强制容器进行重组。
+
+桶接口：
+```cpp
+// 正在使用桶的数目
+c.bucket_count();
+
+// 容器能容纳的最多桶的数目
+c.max_bucket_count();
+
+// 第n个桶中元素的数目
+c.bucket_size(n);
+
+// 关键字为k的元素在哪个桶中
+c.bucket(k);
+```
+桶迭代：
+```cpp
+// 桶中元素的迭代器类型
+local_iterator;
+
+// 桶迭代器的const版本
+const_local_iterator;
+
+// 桶n的首元素迭代器和尾后迭代器
+c.begin(n), c.end(n);
+
+// const版本
+c.cbegin(n), c.cend(n);
+```
+哈希策略：
+```cpp
+// 每个桶的平均元素数目，返回float值
+c.load_factor();
+
+// c保持的桶平均数目的上限，返回float值。需要时c会并添加桶
+c.max_load_factor();
+
+// 重组存储，使得c的桶数目满足，1)不小于n，2)桶平均元素数目不超过上限
+c.rehash(n);
+
+// 重组存储，使得c至少能容纳n个元素而不需要经过重组
+c.reserve(n);
+```
+
+#### 无序容器对关键字类型的要求
+无序容器需要使用 `==` 和 `hash<key_type>` 。标准库为内置类型（包括指针）以及一些标准库类型（包括 `string` 和智能指针）提供了 `hash` 模板。因此它们可以直接用于无序容器。
+
+对于自定义类类型，需要自行提供 `hash` 对象：
+```cpp
+size_t hasher(const Sales_data &sd)
+{
+    return hash<string>()(sd.isbn());
+}
+```
+然后如下定义无序容器：
+```cpp
+unordered_set<Sales_data, decltype(hasher)*> sdset(42, hasher);
+```
+
+如果类本身没有定义 `==` 运算符，也可以提供一个自定义的比较操作：
+```cpp
+bool eqOp(const Sales_data &lhs, const Sales_data &rhs)
+{
+    return lhs.isbn() == rhs.isbn();
+}
+```
+然后如下定义无序容器：
+```cpp
+unordered_set<Sales_data, decltype(hasher)*, decltype(eqOp)*> sdset(42, hasher, eqOp);
+```
