@@ -3667,3 +3667,644 @@ derived(parms) : base(args) { }
 如果基类的构造函数有默认实参，派生类中不会继承这些默认实参，而是相应地生成多个版本的构造函数，它们依次缺少一个参数直到基类中所有带默认实参的参数都不出现在派生类的构造函数中。相当于默认实参是通过调用基类的构造函数来实现的。
 
 继承的构造函数不被当做用户自行定义的构造函数，它不阻止默认构成函数的合成。
+
+<br><br>
+
+# 模板与泛型编程
+
+## 定义模板
+
+### 函数模板
+语法大致如下：
+```cpp
+template <typename T>
+int compare(const T &v1, const T &v2)
+{
+    if (v1 < v2) return -1;
+    if (v2 < v1) return 1;
+    return 0;
+}
+```
+尖括号是**模板参数列表**，里面为以逗号间隔的**类型参数**，不允许为空。在使用模板时，传递**模板实参**绑定到模板参数上。
+
+#### 实例化函数模板
+函数模板适用于某种类型的特定版本就是一个实例，当需要某个版本的时候，编译器会自动**实例化**出该版本。
+
+#### 模板类型参数
+每个类型参数前必须使用关键字 `class` 或 `typename` 。
+
+#### 非类型模板参数
+例如需要一个处理特定长度数组的函数模板，可以使用非类型模板参数：
+```cpp
+template <unsigned N, unsigned M>
+int compare(const char (&p1)[N], const char (&p2)[M])
+{
+    return strcmp(p1, p2);
+}
+```
+模板实参必须传入常量表达式。
+
+#### inline和constexpr的函数模板
+如果模板和 `inline` 、 `constexpr` 一起使用，那么需要注意顺序：
+```cpp
+// 正确
+template <typename T> inline T min(const T&, const T&);
+
+// 错误
+inline template <typename T> T min(const T&, const T&);
+```
+
+#### 编写类型无关的代码
+编写模板函数有两个重要原则：
+- 函数参数声明成 `const` 引用，这样可以传递不可拷贝的类型
+- 函数体中的条件判断仅使用 `<` 运算，这样不需要类型同时也支持 `>` 运算（实际上如果希望它也可以用于指针，那么应该使用 `less` ）
+
+#### 模板编译
+编译器看到模板的定义时，并不立即生成代码，而是在实例化模板时才生成代码。因此，和普通的函数不同，当编译器遇到函数调用的时候，它必须同时看到模板的定义来生成相关的代码，故常常把模板的定义也放在头文件中。
+
+#### 大多数编译错误在实例化期间报告
+因为知道实例化才生成代码，编译错误的报告会被推迟，一般有三个阶段报告错误：
+1. 编译模板本身时，编译器发现一些语法错误，如缺少分号、变量名拼写错误等
+1. 编译器遇到模板使用时，可以检查参数数量是否正确、类型是否匹配等
+1. 模板实例化时，编译器可以检查类型相关的错误（依赖于如何管理实例化，这样的错误可能直到链接时才报告）
+
+### 类模板
+编译器不能为类模板推断模板参数。
+
+#### 定义类模板
+语法如下：
+```cpp
+template <typename T> class Blob { /* ... */ };
+```
+
+#### 实例化模板类
+使用类模板时需要传入额外的信息，这被称为**显式模板实参**：
+```cpp
+Blob<int> ia;
+```
+当实例化模板类时，编译器实际上生成独立的类 `Blob<int>` 。
+
+#### 类模板的成员函数
+类模板的成员函数隐含地使用类的模板参数，所以如果在类模板外部定义成员函数，需要：
+```cpp
+template <typename T>
+ret-type Blob<T>::member-name(parm-list)
+{
+    // ...
+}
+```
+
+#### 类模板成员函数的实例化
+类模板的某个成员函数，只有使用到它的时候才会被实例化，所以如果它没有被使用，即使对于当前的模板实参来说是非法的，也不会带来什么问题。
+
+#### 在类代码内简化模板类名的使用
+一般来说，类模板的名字通常需要伴随模板参数才是有意义的，但是在类作用域内可以直接使用模板名：
+```cpp
+template <typename T>
+class BlobPtr
+{
+public:
+    // ...
+    BlobPtr& operator++();
+    // ...
+};
+```
+实际上这里的 `BlobPtr` 是 `BlobPtr<T>` 的简写，编译器会自动处理好。
+
+#### 在类模板外使用类模板名
+直到遇到类名才进入类的作用域：
+```cpp
+template <typename T>
+BlobPtr<T> BlobPtr<T>::operator++()     // 需要指出模板参数，因为没有进入类的作用域
+{
+    BlobPtr ret = *this;                // 直接使用BlobPtr，此时在作用域内
+    ++*this;
+    return ret;
+}
+```
+
+#### 类模板和友元
+如果模板类包含一个非模板友元，那么友元可以访问所有模板实例。如果友元自身是模板，类可以选择授权给所有实例还是只授权给特定实例。
+
+#### 一对一友好关系
+如下声明：
+```cpp
+template <typename T> class BlobPtr;    // 后续友元声明需要知道BlobPtr是一个模板
+
+template <typename T> class Blob {
+    friend class BlobPtr<T>;
+};
+```
+
+#### 通用和特定的模板友好关系
+```cpp
+template <typename T> class Pal;                // 如上的前置声明
+
+class C
+{
+    friend class Pal<C>;                        // Pal的适用于C的实例是C的友元
+    template <typename T> friend class Pal2;    // Pal2的所有实例都是C的友元，无需前置声明
+};
+
+template <typename T> class C2
+{
+    friend class Pal<T>;                        // 一对一友好关系
+    template <typename X> friend class Pal2;    // 对于C2的每个实例，Pal2的所有实例都是友元
+    friend class Pal3;                          // 对于C2的每个实例，非模板类Pal3都是友元
+};
+```
+
+#### 令模板自己的类型参数称为友元
+在C++11中，类模板可以把类型参数声明成友元：
+```cpp
+template <typename Type> class Bar
+{
+    friend Type;
+};
+```
+实际上，把内置类型声明成友元是可行的，所以上面的代码如果传入模板实参 `int` 也不会报错。
+
+#### 模板类型别名
+对于模板类，可以使用 `typedef` 来声明类型别名：
+```cpp
+typedef Blob<string> StrBlob;
+```
+然而并不能把 `typedef` 和模板类型 `Blob<T>` 结合起来使用。但是在C++11中，可以使用 `using` 为类模板定义类型别名：
+```cpp
+template<typename T> using twin = pair<T, T>;
+twin<string> authors;   // 等价于pair<string, string> authors;
+```
+也可以固定其中一些参数：
+```cpp
+template <typename T> using partD = pair<T, double>;
+partD<string> pdata;    // 等价于pair<string, double> pdata;
+```
+
+#### 类模板的static成员
+类模板也可以声明 `static` 成员，每个模板实例都有属于自己的该成员版本。为了定义该成员，也需要使用模板语法：
+```cpp
+template <typename T>
+size_t Foo<T>::ctr = 0;
+```
+跟其他的成员函数一样，一个 `static` 成员函数只有在使用到它的时候才会被实例化。
+
+### 模板参数
+模板参数的名字没有什么意义，命名成什么都可以。
+
+#### 模板参数与作用域
+模板参数遵循普通的作用域规则，当模板参数声明以后，也会覆盖外层作用域的同名实体。
+
+#### 使用类的类型成员
+对于 `T::size_type` 这样的语法，编译器没法确定 `size_type` 是数据成员还是类型成员。默认情况下编译器认为它是数据成员，如果希望把它当成类型成员，需要使用 `typename` 关键字：
+```cpp
+template <typename T>
+typename T::value_type top(const T &c)
+{
+    if (!c.empty())
+        return c.back();
+    else
+        return typename T::value_type();
+}
+```
+这里的 `typename` 不能使用 `class` 代替。
+
+#### 默认模板实参
+在旧标准中，只能为类模板提供**默认模板实参**。而C++11也允许为函数模板提供默认模板实参：
+```cpp
+template <typename T, typename F = less<T>>
+int compare(const T &v1, const T &v2, F f = F())
+{
+    if (f(v1, v2)) return -1;
+    if (f(v2, v1)) return 1;
+    return 0;
+}
+```
+类似函数默认实参，所有具有默认模板实参的参数应该放在模板参数列表的末尾。
+
+#### 模板默认实参与类模板
+类模板的使用总是需要尖括号，即使所有的模板参数都有默认实参。
+
+### 成员模板
+类中可以包含函数模板，这被称为**成员模板**，它不可以是虚函数。
+
+#### 普通（非模板）类的成员模板
+语法上像声明普通的函数模板一样。
+
+#### 类模板的成员模板
+类模板之中也可以包含成员模板，此时它们具有独立的模板参数。如果在类外定义该成员模板，需要同时提供类和函数的模板参数列表：
+```cpp
+template <typename T>
+template <typename It>
+    Blob<T>::Blob(It b, It e):
+        data(std::make_shared<std::vector<T>>(b, e)) { }
+```
+
+#### 实例化与成员模板
+像普通函数模板一样，编译器也会为成员模板推导出模板实参，并实例化出相应的版本。
+
+### 控制实例化
+因为模板被使用时才被实例化，如果多个独立编译的源文件中使用了相同的实例，那么这些文件中都有该实例的一个副本。为了避免这样造成的庞大开销，C++11允许**显式实例化**。形式如下：
+```cpp
+extern template class Blob<string>;     // 声明
+template class Blob<string>;            // 定义
+```
+当编译器遇到声明的时候，它不会在本文件生成实例化代码，而是相信在程序其他位置有一个显式实例化定义存在。对于某个实例化版本，可以有多个声明，但只能有一个定义。因为编译器遇到实例化就生成代码， `extern` 声明必须出现在任何使用该实例化版本的代码之前。
+
+#### 实例化定义会实例化所有成员
+因为编译器遇到实例化定义时，它并不知道程序会使用哪些成员，所以它会实例化所有成员，故需要确保所有的成员都是合法的。
+
+### 效率与灵活性
+在 `shared_ptr` 中，删除器的类型可以随时更换，故不能保存为一个成员，而是需要一个 `del` 指针来指向它，在析构函数中大概执行如下操作：
+```cpp
+// 因为del是间接保存的，del(p)需要跳转至del指向的函数
+del ? del(p) : delete p;
+```
+而 `unique_ptr` 的删除器类型是固定的，所以可以保存为一个成员，它在删除时：
+```cpp
+// 直接调用删除器
+del(p);
+```
+故 `shared_ptr` 更加灵活， `unique_ptr` 更加高效。
+
+## 模板实参推断
+编译器通过函数实参来确定模板实参的过程被称为**模板实参推断**。
+
+### 类型转换与模板类型参数
+在函数调用的时候，因为可能使用模板参数作为函数参数类型，此时参数绑定规则比较特殊，实际上只有很少的类型转换是允许的：
+- 顶层 `const` 无论在形参还是实参中都会被忽略
+- 可以把非底层 `const` 的指针或引用绑定到底层 `const` 的参数上
+- 如果函数的形参不是引用类型，那么可以把数组实参和函数实参转换成对应的指针类型
+
+其他的类型转换都是不允许的，如：
+```cpp
+template <typename T>
+compare(T, T);          // 两个形参类型必须一致
+
+compare(1L, 0);         // 错误：long和int不一致，并且不允许隐式转换
+```
+
+#### 正常类型转换应用于普通函数实参
+不使用模板参数声明的函数形参，可以使用正常的类型转换规则。
+
+### 函数模板显式实参
+有时候编译器无法推断模板实参类型，或者用户希望控制模板实例化。（比如当模板参数没有出现在函数参数中，编译器无法推断出来）
+
+#### 指定显式模板实参
+对于一个求和函数，把模板参数作为返回类型可以让用户自行选择结果的类型：
+```cpp
+template <typename T1, typename T2, typename T3>
+T1 sum(T2, T3);
+```
+此时则必须显式指定 `T1` :
+```cpp
+auto val = sum<long long>(i, j);
+```
+`T2` 和 `T3` 通过 `i` 和 `j` 的类型推断出来。如此，只有模板参数列表头部的参数才可以显式指定。
+
+### 尾置返回类型与类型转换
+有时候让用户指定模板实参不是一个很好的解决方案，但是函数自己又无法推断出来：
+```cpp
+template <typename It>
+??? &func(It beg, It end)
+{
+    // ...
+    return *beg;
+}
+```
+并没有办法预先知道迭代器会指向什么类型，而让用户指定又不是很方便。在C++11中可以使用尾置返回类型：
+```cpp
+template <typename It>
+auto func(It beg, It end) -> decltype(*beg)
+{
+    // ...
+    return *beg;
+}
+```
+这是因为尾置返回类型出现在参数列表之后，故可以使用参数 `beg` 。
+
+#### 进行类型转换的标准库模板类
+使用迭代器的模板函数常常对迭代器指向元素的类型一无所知，为了获取元素类型，可以使用标准库的**类型转换模板**，它们定义在头文件 `type_traits` 中。这些工具常常用于模板元编程。它们内有一个 `type` 公有成员，表示转换后的类型。它的使用如：
+```cpp
+template <typename It>
+auto fcn2(It beg, It end) -> 
+    typename remove_reference<decltype(*beg)>::type
+{
+    // ...
+    return *beg;    // 返回的是元素的拷贝
+}
+```
+如前面所说，这里需要用 `typename` 关键字通知编译器 `type` 是一个类型成员。下表列出了常用的类型转换模板（ `T` 表示作用于的类型）：
+| 模板 | `T` | 结果 |
+| --- | --- | --- |
+| `remove_reference` | `X&` 或 `X&&` | `X` |
+| `remove_reference` | 其他 | `T` |
+| `add_const` | `X&` 、 `const X` 或函数 | `T` |
+| `add_const` | 其他 | `const T` |
+| `add_lvalue_reference` | `X&` | `T` |
+| `add_lvalue_reference` | `X&&` | `X&` |
+| `add_lvalue_reference` | 其他 | `T&` |
+| `add_rvalue_reference` | `X&` 或 `X&&` | `T` |
+| `add_rvalue_reference` | 其他 | `T&&` |
+| `remove_pointer` | `X*` | `X` |
+| `remove_pointer` | 其他 | `T` |
+| `add_pointer` | `X&` 或 `X&&` | `X*` |
+| `add_pointer` | 其他 | `T*` |
+| `make_signed` | `unsigned X` | `singed X` |
+| `make_signed` | 其他 | `T` |
+| `make_unsigned` | `signed X` | `unsigned X` |
+| `make_unsigned` | 其他 | `T` |
+| `remove_extent` | `X[n]` | `X` |
+| `remove_extent` | 其他 | `T` |
+| `remove_all_extents` | `X[n1][n2]...` | `X` |
+| `remove_all_extents` | 其他 | `T` |
+
+### 函数指针和实参推断
+也可以把函数模板绑定到函数指针上，编译器会进行推断：
+```cpp
+template <typename T>
+int compare(const T&, const T&);
+
+int (*pf1)(const int&, const int&) = compare;
+```
+推断失败将会报错。
+
+### 模板实参推断和引用
+
+#### 从左值引用函数参数推断类型
+对于函数模板：
+```cpp
+template <typename T>
+void f1(T&);
+```
+必须传递给它一个左值。可以传递 `const` 变量，此时 `T` 会被推断为 `const` 类型。而如果是这个函数模板：
+```cpp
+template <typename T>
+void f2(const T&);
+```
+则可以给它传递任何类型的实参。
+
+#### 从右值引用函数参数推断类型
+可以给它传递一个右值。
+
+#### 引用折叠和右值引用参数
+一般不能给右值引用参数传递一个左值，但是实际上有两个例外的绑定规则：
+- 对于函数模板，当把 `int` 传递给 `T&&` 时，编译器推断 `T` 为 `int&` 。（一般不能直接定义引用的引用，但是通过类型别名或通过模板类型参数间接定义是可以的）
+- 当出现“引用的引用”时，多个连续的引用实际上折叠成一个左值引用，如 `T & &` 折叠成 `T &` 。（只有 `T && &&` 会折叠成右值引用）
+
+根据这样的规则，把左值传递给右值引用的函数模板也是可以的，此时实例化出的模板函数实际上接受一个左值引用参数。
+
+#### 编写接受右值引用参数的模板参数
+上述的特性使得接受右值引用的参数的模板变得比较奇怪：
+```cpp
+template <typename T>
+void f3(T&& val)
+{
+    T t = val;    // 不知道是拷贝val还是绑定引用t到val
+    t = fcn(t);   // 是否会改变val？
+    if (val == t) // 如果t是引用，则恒为真
+        // ...
+}
+```
+为了处理这样的情况，或许 `remove_reference` 可以派上用场。实际使用时，这样的模板通常用于两种情况：模板转发实参、模板被重载。一般来说使用右值引用的函数模板如下重载：
+```cpp
+template <typename T>
+void f(T&&);
+
+template <typename T>
+void f(const T&);
+```
+这使得传递左值不会调用右值引用版本。
+
+### 理解std::move
+
+#### std::move是如何定义的
+```cpp
+template <typename T>
+typename remove_reference<T>::type&& move(T &&t)
+{
+    return static_cast<typename remove_reference<T>::type&&>(t);
+}
+```
+
+#### 从一个左值static_cast到一个右值引用是允许的
+C++11引入一条转换的特许规则，虽然左值不可以隐式地转换成右值引用，但借助 `static_cast` 是可以的。
+
+### 转发
+有些函数需要转发它的参数，并且需要保留参数的全部性质，包括 `const` 以及左值右值等。比如：
+```cpp
+// f需要通过引用改变v2的实参
+void f(int v1, int &v2)
+{
+    cout << v1 << " " << ++v2 << endl;
+}
+
+// 希望通过flip翻转参数顺序，但是v2绑定到了形参t1上，不能改变t1的实参
+template <typename F, typename T1, typename T2>
+void flip1(F f, T1 t1, T2 t2)
+{
+    f(t2, t1);
+}
+```
+上述的代码在调用时不符合预期：
+```cpp
+flip1(f, j, 42);    // 不能改变j的值
+```
+
+#### 定义能保持类型信息的函数参数
+可以考虑使用引用折叠的特性：
+```cpp
+template <typename F, typename T1, typename T2>
+void flip2(F f, T1 &&t1, T2 &&t2)
+{
+    f(t2, t1);
+}
+```
+对于接受左值引用的函数 `f` ，这样已经工作得很好，但对于接受右值引用的函数 `g` ：
+```cpp
+void g(int &&i, int &j)
+{
+    cout << i << " " << j << endl;
+}
+```
+按上述的方式传递给它的 `t2` 实际上也是一个左值，不能绑定到 `g` 的参数 `i` 上。
+
+#### 在调用中使用std::forward保持类型信息
+C++11引入了 `forward` ，也定义在头文件 `utility` 中，与 `move` 不同的是它必须通过显式模板实参来调用， `forward<T>(arg)` 返回 `T&&` 类型：
+```cpp
+template <typename F, typename T1, typename T2>
+void flip(F f, T1 &&t1, T2 &&t2)
+{
+    f(std::forward<T2>(t2), std::forward<T1>(t1));
+}
+```
+和 `std::move` 类似，建议不使用 `using` 声明来简化 `forward` 的调用。
+
+## 重载与模板
+函数模板可以被另一个模板或一个普通非模板函数重载。然而函数匹配规则会受到一些影响：
+- 对于一个调用，其候选函数包括所有模板实参推断成功的函数模板实例
+- 候选的函数模板总是可行的，因为通过了模板实参推断
+- 可行函数按类型转换来排序，而[函数模板适用的转换](#类型转换与模板类型参数)非常有限
+- 如果一个函数比其他函数匹配得更好，那么它会被选择。如果多个函数匹配得同样好，那么：
+    - 如果只有一个非模板函数，那么它会被选择
+    - 如果全是模板函数，并且有一个更特例化，那么它会被选择
+    - 否则，报错
+
+#### 多个可行模板
+如果有两个函数模板的参数分别为 `T*` 和 `const T&` ，给它们传递一个 `int*` 时两个函数都是可行的。根据模板的匹配规则，由于 `const T&` 实际上可以匹配任何参数，则 `T*` 相对来说是更特例化的，所以它会被选择。
+
+#### 重载模板和类型转换
+值得考虑的是C风格字符串和 `string` 之间的转换，如果现在有三个函数：
+```cpp
+template <typename T> debug_rep(const T&);
+template <typename T> debug_rep(T*);
+debug_rep(const string&);
+```
+或许很自然地希望把 `const char*` 转换成 `string` 来处理。但实际上在这里对于两个模板来说是精确匹配，而对于 `string` 的版本则需要经过转换，所以它不被选择。在两个模板中，第二个更特例化，所以它会被选择。如果还是希望按 `string` 的方式处理它，可以定义另两个重载：
+```cpp
+debug_rep(char*);
+debug_rep(const char*);
+```
+然后在内部显式把它们构造成 `string` 再调用 `debug_rep()` 。
+
+## 可变参数模板
+C++11引入了**可变参数模板**，它允许定义一个模板函数或模板类，接受可变数目的参数。可变数目的参数被称为**参数包**，允许接受零或多个参数。存在两种参数包：**模板参数包**和**函数参数包**。语法如：
+```cpp
+template <typename T, typename... Args>
+void foo(const T &t, const Args& ... rest);
+```
+对于这样的模板，编译器除了推断类型，还会推断参数包中参数的数量。
+
+#### sizeof...运算符
+C++11提供了 `sizeof...` 来了解参数包中参数的数量：
+```cpp
+template <typename ... Args> void g(Args ... args) {
+    cout << sizeof...(Args) << endl;
+    cout << sizeof...(args) << endl;
+}
+```
+
+### 编写可变参数函数模板
+使用可变参数模板的例子：
+```cpp
+template <typename T>
+ostream &print(ostream &os, const T &t)
+{
+    return os << t;
+}
+
+template <typename T, typename ... Args>
+ostream &print(ostream &os, const T &t, const Args& ... rest)
+{
+    os << t << ", ";
+    return print(os, rest...);
+}
+```
+这样的程序常常采用递归的做法，传递 `os, rest...` 给下一个 `print` 函数时， `rest` 参数包的第一个参数被绑定到 `t` 上，剩下的参数包被绑定到 `rest` 上。
+
+对于前面的调用，超过了两个参数，所以只能调用第二个版本；而对于最后一次调用，正好两个参数，调用两个版本都是可行的，但是第一个版本更特例化，所以它会被选择。
+
+注意，保证定义可变参数模板的时候，非可变参数版本在作用域内，否则会遇到无限递归的问题。
+
+### 包扩展
+对于一个参数包，除了获取其大小，就只能**扩展**它了。扩展包的时候需要提供元素的**模式**。语法上，通过在参数包名后跟上 `...` 来扩展它，编译器把它变成逗号分隔的参数列表。
+
+#### 理解包扩展
+C++支持更复杂的包扩展语法，如：
+```cpp
+template <typename... Args>
+ostream &errorMsg(ostream &os, const Args&... rest)
+{
+    return print(os, debug_rep(rest)...);
+}
+```
+这表示希望对参数包中的每个参数调用 `debug_rep` 函数。如果写成了以下的代码则会报错：
+```cpp
+return print(os, debug_rep(rest...));
+```
+显然 `...` 的位置就是参数包被扩展的位置。
+
+### 转发参数包
+C++11中可以结合可变参数模板和 `forward` 机制来编写函数，从而将函数实参不变地传递给其他函数：
+```cpp
+class StrVec
+{
+public:
+    template <typename... Args>
+    void emplace_back(Args&&... args)
+    {
+        chk_n_alloc();
+        alloc.construct(first_free++, std::forward<Args>(args)...);
+    }
+};
+```
+
+## 模板特例化
+有时模板对于特定的模板参数可能不能正常使用，可以为这些特定的模板参数提供**模板特例化**版本。
+
+#### 定义函数模板特例化
+语法如下：
+```cpp
+template <typename T>
+int compare(const T&, const T&);
+
+template <>
+int compare(const char* const &p1, const char* const &p2)
+{
+    return strcmp(p1, p2);
+}
+```
+由于希望特例化的版本是针对 `const char*` 的，而 `T` 被推断为 `const char*` 时，实际参数的类型就是 `const char* const &` 。另外，特例化中的需要使用 `template <>` 显式指出这是在进行特例化。
+
+#### 函数重载与模板特例化
+特例化实际上提供了一个模板函数的实例，而不是一个函数重载的版本。因此，非模板函数仍优于特例化版本被选择。
+
+为了特例化一个模板，原模板的声明必须在作用域中。并且在任何使用模板实例的代码之前，特例化版本的声明也必须在作用域中。
+
+#### 类模板特例化
+可以为自己的类提供 `std::hash` 的特例化版本：
+```cpp
+namespace std       // 打开std命名空间
+{
+    template <>
+    struct hash<Sales_data>     // 特例化std::hash
+    {
+        // 用来散列无序容器的类型必须定义以下类型
+        typedef size_t result_type;
+        typedef Sales_data argument_type;
+        size_t operator()(const Sales_data&) const;
+        // 使用合成的拷贝控制成员和默认构造函数
+    };
+
+    size_t hash<Sales_data>::operator()(const Sales_data &s) const
+    {
+        return hash<string>()(s.bookNo) ^ hash<unsigned>()(s.units_sold) ^ hash<double>()(s.revenue);
+    }
+}
+```
+
+#### 类模板部分特例化
+可以只指定模板的一部分参数而非全部参数，或者提供参数的一部分而非全部特性，这被称为**部分特例化**。它本身也是一个模板，并且只使用于类模板。例如 `remove_reference` 就使用一系列特例化版本来完成任务：
+```cpp
+// 最原始通用的版本
+template <class T> struct remove_reference { typedef T type; };
+
+// 部分特例化版本，将用于左值引用和右值引用
+template <class T> struct remove_reference<T&> { typedef T type; };
+template <class T> struct remove_reference<T&&> { typedef T type; };
+```
+
+#### 特例化成员而不是类
+如：
+```cpp
+// 类模板Foo
+template <typename T> struct Foo {
+    Foo(const T &t = T()): mem(t) { }
+    void Bar() { /* ... */ }
+    T mem;
+    // ...
+};
+
+// 特例化Foo<int>的成员Bar
+template <> void Foo<int>::Bar() { /* ... */ }
+```
+这样就可以单独特例化一些成员，该实例的其他成员还是使用模板的版本。
