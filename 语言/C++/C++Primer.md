@@ -4308,3 +4308,600 @@ template <typename T> struct Foo {
 template <> void Foo<int>::Bar() { /* ... */ }
 ```
 这样就可以单独特例化一些成员，该实例的其他成员还是使用模板的版本。
+
+<br><br>
+
+# 标准库特殊设施
+
+## tuple类型
+C++11引入了 `tuple` 类型，定义在 `tuple` 头文件中，类似于 `pair` 不过 `tuple` 可以有任意数量的成员。支持如下操作：
+```cpp
+// t是一个tuple，成员数为n，第i个成员的类型为Ti。所有成员进行值初始化。
+tuple<T1, T2, ..., Tn> t;
+
+// t是一个tuple，成员类型为T1...Tn，每个成员用对应的初始值vi进行初始化。此构造函数是explicit的。
+tuple<T1, T2, ..., Tn> t(v1, v2, ..., vn);
+
+// 返回一个用给定初始值初始化的tuple。tuple的类型由初始值的类型推断。
+make_tuple(v1, v2, ..., vn);
+
+// 当两个tuple具有相同数量的成员且成员对应相等时两个tuple相等。使用==运算符进行比较，一旦发现不相等的成员就停止比较。
+tuple1 == tuple2;
+tuple1 != tuple2;
+
+// tuple的关系运算使用字典序。两个tuple必须具有相同数量的成员。使用<运算符比较t1的成员和t2中的对应成员。
+tuple1 relop tuple2;
+
+// 返回t的第i个数据成员的引用。如果t是左值则返回左值引用，否则返回右值引用。tuple的所有成员都是public的。
+get<i>(t);
+
+// 一个类模板，可以通过一个tuple类型来初始化。它有一个名为value的public constexpr static数据成员，类型为size_t，表示给定tuple类型中的成员数量。
+tuple_size<tupleType>::value;
+
+// 一个类模板，可以通过一个整型常量和一个tuple类型来初始化。他有一个名为type的public成员，表示给定tuple类型中指定成员的类型。
+tuple_element<i, tupleType>::type;
+```
+
+## bitset类型
+定义在头文件 `bitset` 中。
+
+### 定义和初始化bitset
+定义 `bitset` 需要把长度当做模板参数传递给它，长度需要是常量表达式。它支持如下初始化方式：
+```cpp
+// b有n位，每一位都为0。此构造函数是constexpr的。
+bitset<n> b;
+
+// b是unsigned long long值u的低n位的拷贝。如果n超过了unsigned long long的大小，则高位被设置为0。此构造函数是constexpr的。
+bitset<n> b(u);
+
+// 以下两个构造函数是explicit的。指定zero和one字符的功能是C++11新增的。
+
+// b是string s从位置pos开始m个字符的拷贝。s只能包含字符zero和one，分别对应0和1，否则抛出invalid_argument异常。
+bitset<n> b(s, pos = 0, m = string::npos, zero = '0', one = '1');
+
+// 与上一个构造函数相同，但从cp指向的字符数组中拷贝字符。如果未提供m，则cp必须指向一个C风格字符串。如果提供了m，则从cp开始必须至少有m个zero或one字符。
+bitset<n> b(cp, m, zero, one);
+```
+
+#### 用unsigned值初始化bitset
+传递给构造函数的整型值会被转换成 `unsigned long long` ，如果需要的长度比 `unsigned long long` 的长度短，则高位会被截断；如果更长，则高位会被填充0。
+
+### bitset操作
+它支持位运算操作符，还支持如下操作：
+```cpp
+// 有任意位为1？
+b.any();
+
+// 所有位为1？
+b.all();
+
+// 所有位为0？
+b.none();
+
+// 1的个数
+b.count();
+
+// b的位数。此成员是constexpr的。
+b.size();
+
+// pos位为1？
+b.test(pos);
+
+// 设置pos位为bool值v
+b.set(pos, v = true);
+
+// 设置所有位为1
+b.set();
+
+// 设置pos位为0
+b.reset(pos);
+
+// 设置所有位为0
+b.reset();
+
+// 翻转pos位的值
+b.flip(pos);
+
+// 翻转所有位的值
+b.flip();
+
+// 访问pos位。如果b是const的，则如果pos位为1返回bool值true，否则返回false。
+b[pos];
+
+// 返回一个unsigned long或unsigned long long值，其位模式与b相同。如果b中位模式不能放入该类型，则抛出overflow_error异常。
+b.to_ulong();
+b.to_ullong();
+
+// 返回一个string，表示b中的位模式。用zero字符表示0位，用one字符表示1位。
+b.to_string(zero = '0', one = '1');
+
+// 将b中二进制位打印成0和1，输出到os
+os << b;
+
+// 从is读取字符存入b。当下一个字符不是1或0时，或已经读入b.size()个位时，读取停止。
+is >> b;
+```
+
+## 正则表达式
+C++11引入了正则表达式库，定义在 `regex` 头文件中，有以下组件：
+- `regex` ：表示一个正则表达式的类
+- `regex_match` ：将一个字符序列与一个正则表达式匹配
+- `regex_search` ：寻找第一个与正则表达式匹配的子序列
+- `regex_replace` ：使用给定格式替换一个正则表达式
+- `sregex_iterator` ：迭代器适配器，调用 `regex_search` 来遍历一个 `string` 中所有匹配的子串
+- `smatch` ：容器类，保存在 `string` 中搜索的结果
+- `ssub_match` ： `string` 中匹配的子表达式的结果
+
+其中 `regex_search` 和 `regex_match` 的参数为：
+- `(seq, r, mft)` ：在字符序列 `seq` 中查找 `regex` 对象 `r` 中的正则表达式。 `seq` 可以是一个 `string` 、表示范围的一对迭代器以及一个指向空字符结尾的字符数组的指针。 `mft` 是一个可选的 `regex_constants::match_flag_type` 值，影响匹配过程。
+- `(seq, m, r, mft)` ：同上， `m` 是一个 `match` 对象，用来保存匹配结果的相关细节。 `m` 和 `seq` 必须具有兼容的类型。
+
+### 使用正则表达式库
+一个简单的例子：
+```cpp
+// 核心部分的正则模式，查找不在字符c之后的ei
+string pattern("[^c]ei");
+
+// 构建整个模式，匹配整个单词
+pattern = "[[:alpha:]]*" + pattern + "[[:alpha:]]*";
+
+// 构造regex对象
+regex r(pattern);
+
+// 定义一个smatch对象保存搜索结果
+smatch results;
+
+// 定义一个待搜索的字符串
+string test_str = "receipt freind theif receive";
+
+// 搜索，打印匹配到的结果（regex_search匹配成功一次就停止）
+if (regex_search(test_str, results, r))
+    cout << results.str() << endl;
+```
+
+#### 指定regex对象的选项
+有一些标志可以影响 `regex` 如何操作，可以在定义 `regex` 或是对 `regex` 调用 `assign` 赋予新的值时指定。它们定义在 `regex` 和 `regex_constants::syntax_option_type` 中，分别是：
+- `icase` ：匹配过程中忽略大小写
+- `nosubs` ：不保存匹配的子表达式
+- `optimize` ：执行速度优于构造速度
+- `ECMAScript` ：使用ECMA-262指定的语法
+- `basic` ：使用 `POSIX` 基本的正则表达式语法
+- `extended` ：使用 `POSIX` 扩展的正则表达式语法
+- `awk` ：使用 `POSIX` 版本的 `awk` 语言的语法
+- `grep` ：使用 `POSIX` 版本的 `grep` 的语法
+- `egrep` ：使用 `POSIX` 版本的 `egrep` 的语法
+
+后六个选项指定正则表达式的语法，必须设置其一，默认是 `ECMAScript` 。在定义 `regex` 时，可以传递标志：
+```cpp
+// re表示一个正则表达式，它可以是一个string、一个表示字符范围的迭代器对、一个指向空字符结尾的字符数组的指针、一个字符指针和一个计数器或是一个花括号包围的字符列表。f是指处对象如何处理的标志。
+regex r(re, f = ECMAScript);
+
+// 将r1中的正则表达式替换为re。re表示一个正则表达式，它可以是另一个regex对象、一个string、一个指向空字符结尾的字符数组的指针或是一个花括号包围的字符列表。
+r1 = re;
+
+// 与使用赋值运算符 = 的效果相同，f与上面的意义相同
+r1.assign(re, f);
+
+// r中子表达式的数目
+r.mark_count();
+
+// 返回r的标志集
+r.flags();
+```
+
+#### 指定或使用正则表达式的错误
+正则表达式是在运行时，当 `regex` 对象初始化或赋予一个新的模式时才被编译的。如果遇到错误就会抛出 `regex_error` 异常， `what` 成员可以描述错误的原因；还有一个 `code` 成员返回错误的编码，具体编码是依赖于实现的。错误的类型定义在 `regex` 和 `regex_constants::error_type` 中，分别是：
+- `error_collate` ：无效的元素校对请求
+- `error_ctype` ：无效的字符类
+- `error_escape` ：无效的转义字符或无效的尾置转义
+- `error_backref` ：无效的后向引用
+- `error_brack` ：不匹配的方括号
+- `error_paren` ：不匹配的圆括号
+- `error_brace` ：不匹配的花括号
+- `error_badbrace` ：花括号中无效的范围
+- `error_range` ：无效的字符范围（如z-a）
+- `error_space` ：内存不足，无法处理此正则表达式
+- `error_badrepeat` ：重复字符（如 `*` ）之前没有有效的正则表达式
+- `error_complexity` ：正则表达式太复杂
+- `error_stack` ：栈空间不足，无法处理此正则表达式
+
+#### 正则表达式类和输入序列类型
+标准库为不同类型的输入序列提供了多个版本的正则表达式组件：
+- `string` ： `regex` 、 `smatch` 、 `ssub_match` 、 `sregex_iterator`
+- `const char*` ： `regex` 、 `cmatch` 、 `csub_match` 、 `cregex_iterator`
+- `wstring` ： `wregex` 、 `wsmatch` 、 `wssub_match` 、 `wsregex_iterator`
+- `const wchar_t*` ： `wregex` 、 `wcmatch` 、 `wcsub_match` 、 `wcregex_iterator`
+
+### 匹配与Regex迭代器类型
+`regex_search` 查找到第一个匹配就停止了，通过 `regex_iterator` 可以获得所有匹配，它是一种迭代器适配器，绑定到一个输入序列和一个 `regex` 对象上。以 `sregex_iterator` 为例（ `cregex_iterator` 、 `wsregex_iterator` 、 `wcregex_iterator` 类似），它支持如下操作：
+```cpp
+// 一个sregex_iterator，遍历迭代器b和e表示的string。它调用sregex_search(b, e, r)定位到第一个匹配的位置。
+sregex_iterator it(b, e, r);
+
+// 默认初始化得到尾后迭代器
+sregex_iterator end;
+
+// 根据最后一个调用regex_search的结果，返回一个smatch对象的引用或一个指向smatch对象的指针
+*it;
+it->
+
+// 从输入序列当前匹配位置开始调用regex_search，后置版本会返回旧值
+it++;
+++it;
+
+// 如果两个sregex_iterator都是尾后迭代器，则它们相等。否则，如果它们是从相同的输入序列和regex对象构造的，则它们相等。否则，它们不相等。
+it1 == it2;
+it1 != it2;
+```
+
+#### 使用匹配数据
+`smatch` 和 `ssub_match` 类型都支持如下操作：
+```cpp
+// 以下操作同样使用于cmatch、wsmatch和wcmatch以及对应的csub_match、wssub_match和wcsub_match
+
+// 如果已经通过调用regex_search或regex_match设置了m，则返回true，否则返回false。如果该操作返回false，对m进行操作是未定义的。
+m.ready();
+
+// 如果匹配失败，则返回0；否则返回最近一次匹配的正则表达式中子表达式的数目
+m.size();
+
+// 若m.size()为0，则返回true；否则返回false
+m.empty();
+
+// 一个ssub_match对象，表示当前匹配之前的序列
+m.prefix();
+
+// 一个ssub_match对象，表示当前匹配之后的序列
+m.suffix();
+
+// 见后方表格
+m.format(...);
+
+// 下方使用的n默认值为0，必须小于m.size()。n=0则表示整个匹配
+
+// 第n个匹配的子表达式大小
+m.length(n);
+
+// 第n个匹配的子表达式距序列开始的距离
+m.position(n);
+
+// 返回一个string，表示第n个匹配的子表达式
+m.str(n);
+
+// 第n个子表达式的ssub_match对象
+m[n];
+
+// 表示m中sub_match元素范围的迭代器。与往常一样，cbegin和cend返回const_iterator
+m.begin();
+m.end();
+m.cbegin();
+m.cend();
+```
+
+### 使用子表达式
+正则表达式的模式通常包含一个或多个子表达式。
+
+#### 使用子匹配操作
+当获得一个完整匹配的时候，子表达式不一定是匹配的一部分，有一些操作可以用来了解子表达式的匹配情况：
+```cpp
+// 使用于ssub_match、csub_match、wssub_match和wcsub_match
+
+// 一个public bool数据成员，指出此ssub_match是否匹配了
+matched;
+
+// public数据成员，指向匹配序列首元素和尾后位置的迭代器。如果未匹配，则两个迭代器相等。
+first;
+second;
+
+// 匹配的大小。如果没有匹配上则返回0
+length();
+
+// 返回一个包含输入中匹配部分的string。如果matched为false，则返回空string。
+str();
+
+// 将ssub_match对象ssub转化为string对象s。等价于s=ssub.str()。该运算符不是explicit的。
+s = ssub;
+```
+
+### 使用regex_replace
+在输入序列中查找并替换一个正则表达式，可以调用 `regex_replace` ，接受一个输入字符序列和一个 `regex` 对象，还接受一个描述输出格式的字符串：
+```cpp
+// 使用格式字符串fmt生成格式化输出，匹配在m中，可选的match_flag_type标志在mft中
+// fmt可以是一个string
+// mft的默认值是format_default
+m.format(fmt, mft);         // 返回一个string保存输出。fmt也可以是一个表示字符数组中范围的一对指针。
+m.format(dest, fmt, mft);   // 把输出写入迭代器dest指向的目的位置。fmt也可以是一个指向空字符结尾的字符数组的指针
+
+// 遍历seq，用regex_search查找与regex对象r匹配的子串。
+// 使用格式字符串fmt和可选的match_flag_type标志mft生成格式化输出。
+// mft的默认值是match_default
+// fmt可以是一个string或指向空字符结尾的字符数组的指针
+regex_replace(seq, r, fmt, mft);            // 返回一个string保存输出
+regex_replace(dest, seq, r, fmt, mft);      // 将输出写入到迭代器dest指定的位置
+```
+使用的例子如下：
+```cpp
+string fmt = "$2.$5.$7";
+regex r(phone);
+string number = "(908) 555-1800";
+cout << regex_replace(number, r, fmt) << endl;  // 908.555.1800
+```
+
+#### 用来控制匹配和格式的标志
+标准库也定义了一些标志来控制替换过程的行为，定义在 `std::regex_constants` 命名空间中的 `match_flag_type` 中，包括：
+- `match_default` ：等价于 `format_default`
+- `match_not_bol` ：不将首字符作为行首处理
+- `match_not_eol` ：不将尾字符作为行尾处理
+- `match_not_bow` ：不将首字符作为单词首处理
+- `match_not_eow` ：不将尾字符作为单词尾处理
+- `match_any` ：如果存在多于一个匹配，返回任意一个
+- `match_not_null` ：不匹配任何空序列
+- `match_continuous` ：匹配必须从输入的首字符开始
+- `match_prev_avail` ：输入序列包含第一个字符之前的内容
+- `format_default` ：用 `ECMAScript` 规则替换字符串
+- `format_sed` ：用 `POSIX sed` 规则替换字符串
+- `format_no_copy` ：不输出输入序列中未匹配的部分
+- `format_first_only` ：只替换子表达式的第一次出现
+
+## 随机数
+C++11之前，C++依赖于C库的简单函数 `rand()` 来生成随机数，它在0和一个系统相关的最大值（至少是32767）之间生成均匀分布的伪随机数。然而，很多程序需要其他范围的随机数，或者需要非均匀分布的随机数和随机浮点数。如果由程序员对于 `rand()` 的结果做出变换，很可能引入非随机性。
+
+因此C++11在头文件 `random` 中定义了一组类来生成随机数，分别是：**随机数引擎类**、**随机数分布类**。其中引擎类生成 `unsigned` 随机数序列，分布类使用引擎类生成指定类型的、在给定范围内的、服从特定概率分布的随机数。
+
+### 随机数引擎和分布
+随机数引擎定义了调用运算符，不接受参数并返回一个随机 `unsigned` 整数，如：
+```cpp
+default_random_engine e;            // 生成一个随机数引擎
+for (size_t i = 0; i < 10; ++i)
+    cout << e() << " ";             // 不断生成下一个随机数
+```
+标准库定义了多个随机数引擎类，它们的性能和随机性质量不同，编译器选择其中一个作为 `default_random_engine` ，一般具有最常用的特性。它有以下操作：
+```cpp
+// 默认构造函数；使用该引擎类型默认的种子
+Engine e;
+
+// 使用整型值s作为种子
+Engine e(s);
+
+// 使用种子s重置引擎的状态
+e.seed(s);
+
+// 此引擎可生成的最小值和最大值
+e.min();
+e.max();
+
+// 此引擎生成的unsigned整数的类型
+Engine::result_type;
+
+// 将引擎推进u步；u的类型为unsigned long long
+e.discard(u);
+```
+一般来说引擎生成的随机数称为原始随机数，不能直接使用，因为范围不符合需求。
+
+#### 分布类型和引擎
+为了得到在指定范围内的数，使用一个分布类型的对象：
+```cpp
+// 生成0到9之间的均匀分布的随机数
+uniform_int_distribution<unsigned> u(0, 9);
+default_random_engine e;
+for (size_t i = 0; i < 10; ++i)
+    cout << u(e) << " ";
+```
+这里定义了一个 `uniform_int_distribution` 分布类型的对象 `u` ，它生成一个均匀分布的 `unsigned` 整数，范围是0到9。使用时需要把引擎传递给它。
+
+#### 设置随机数发生器种子
+和 `rand()` 一样，随机数引擎具有固定的默认种子，可以传入 `time(0)` 作为种子。 `time()` 定义在头文件 `ctime` 中。
+
+### 其他随机数分布
+分布类型支持的操作：
+```cpp
+// 默认构造函数，使d准备好被使用。其余构造函数依赖于具体类型。构造函数是explicit的。
+Dist d;
+
+// 用相同的e连续调用d的话，会根据d的分布式类型生成一个随机数序列；e是随机数引擎对象
+d(e);
+
+// 返回d(e)能生成的最小值和最大值
+d.min();
+d.max();
+
+// 重建d的状态，使得随后对d的使用不依赖于d已经生成的值
+d.reset();
+```
+
+#### 生成随机实数
+```cpp
+uniform_real_distribution<double> u(0, 1);
+```
+
+#### 使用分布的默认结果类型
+每个分布模板都有一个默认模板实参：
+```cpp
+uniform_int_distribution<> u(0, 9);
+```
+
+#### 生成非均匀分布的随机数
+```cpp
+// 正态分布，均值4，标准差1.5
+normal_distribution<double> n(4, 1.5);
+```
+
+#### bernoulli_distribution类
+这个分布类不是模板，它总是返回 `bool` 类型：
+```cpp
+bernoulli_distribution b;           // 默认有50%的概率返回true
+bernoulli_distribution b(.7);       // 有70%的概率返回true
+```
+
+## IO库再探
+
+### 格式化输入与输出
+除了条件状态， `iostream` 对象还维护一个格式状态来控制IO如何格式化的细节。标准库定义了一组**操纵符**来修改流的格式状态。定义在 `iostream` 的操纵符如下（加粗斜体的是默认状态）：
+- `boolalpha` ：将 `true` 和 `false` 输出为字符串
+- ***`noboolalpha`*** ：将 `true` 和 `false` 输出为 `1` 和 `0`
+- `showbase` ：对于整型值输出表示进制的前缀
+- ***`noshowbase`*** ：不输出表示进制的前缀
+- `showpoint` ：对于浮点数，总是显示小数点
+- ***`noshowpoint`*** ：只在浮点数包含小数部分时才显示小数点
+- `showpos` ：对非负数显示 `+`
+- ***`noshowpos`*** ：对非负数不显示 `+`
+- `uppercase` ：在十六进制值中打印 `0X` ，在科学计数法中打印 `E`
+- ***`nouppercase`*** ：在十六进制值中打印 `0x` ，在科学计数法中打印 `e`
+- ***`dec`*** ：整型值显示为十进制
+- `hex` ：整型值显示为十六进制
+- `oct` ：整型值显示为八进制
+- `left` ：在值的右侧添加填充字符
+- `right` ：在值的左侧添加填充字符
+- `internal` ：在符号和数值之间添加填充字符
+- `fixed` ：浮点数显示为定点十进制
+- `scientific` ：浮点数显示为科学计数法
+- `hexfloat` ：浮点数显示为十六进制（C++11新增）
+- `defaultfloat` ：重置浮点数显示为十进制（C++11新增）
+- `unitbuf` ：每次输出后刷新缓冲区
+- ***`nounitbuf`*** ：缓冲区满时才刷新
+- ***`skipws`*** ：输入运算符跳过空白
+- `noskipws` ：输入运算符不跳过空白
+- `flush` ：刷新 `ostream` 缓冲区
+- `ends` ：插入空字符，然后刷新 `ostream` 缓冲区
+- `endl` ：插入换行符，然后刷新 `ostream` 缓冲区
+
+还有几个操纵符定义在 `iomanip` 头文件中：
+- `setfill(ch)` ：用 `ch` 填充空白
+- `setprecision(n)` ：将浮点精度设置为 `n`
+- `setw(n)` ：读或写值的宽度为 `n` 个字符
+- `setbase(b)` ：将整型值输出为 `b` 进制
+
+#### 很多操纵符改变格式状态
+大多数操纵符是设置/复原成对的，即设置操纵符通常影响后续所有的IO操作，直到复原操纵符为止。
+
+#### 控制布尔值的格式
+默认情况下， `bool` 值的 `true` 输出为 `1` ， `false` 输出为 `0` 。 `boolalpha` 使得输出字符串 `true` 和 `false` ，用 `noboolalpha` 恢复默认格式。
+
+#### 指定整型值的禁止
+默认情况下，整型值输入输出使用十进制。可以使用 `hex` 改为十六进制输出， `oct` 改为八进制输出， `dec` 恢复十进制输出。
+
+#### 在输出中指出进制
+上面的输出方式，无法直接看出输出的数值是几进制的数。使用 `showbase` 操纵符可以在输出中给出相应的线索：
+- 前缀 `0x` 表示十六进制
+- 前缀 `0` 表示八进制
+- 无前缀表示十进制
+
+使用 `noshowbase` 恢复默认格式。
+
+#### 指定打印精度
+默认情况下，浮点值按六位数字的精度打印，超过精度时进行四舍五入（不是截断）。可以使用IO对象自己的成员 `precision` 或是 `setprecision` 操纵符来指定精度：
+```cpp
+// 获得当前精度位数
+cout.precision();
+
+// 设置精度为12位，并返回之前的精度
+cout.precision(12);
+
+// 设置精度为12位
+cout << setprecision(12);
+```
+
+#### 指定浮点数计数法
+使用 `scientific` 令流使用科学技术法，使用 `fixed` 令流使用定点十进制表示法，使用 `hexfloat` 令流使用十六进制表示法，使用 `defaultfloat` 恢复默认格式。
+
+#### 输出补白
+- `setw` ：只影响下一个输出操作，指定数字或字符串值的最小宽度
+    ```cpp
+    cout << setw(6) << 42;       // 输出42，在前方补空格
+    ```
+- `left` ：左对齐输出，在后面补空格
+- `right` ：右对齐输出，在前面补空格
+- `internal` ：影响负数，左对齐符号，右对齐数值，在中间补空格
+- `setfill` ：控制补白的字符，默认为 `' '`
+    ```cpp
+    cout << setfill('*') << setw(6) << 42;       // 输出**42
+    ```
+
+### 未格式化的输入/输出操作
+除了使用**格式化IO**，标准库提供了一组低层操作来实现**未格式化IO**，允许将一个流当做一个无解释的字节序列来处理。
+
+#### 单字节操作
+```cpp
+// 从istream对象is读取下一个字节存入字符ch。返回is
+is.get(ch);
+
+// 将字符ch写入ostream对象os。返回os
+os.put(ch);
+
+// 将is的下一个字节作为int返回
+is.get();
+
+// 将字符ch放回is（必须是上一个读取的字符）。返回is
+is.putback(ch);
+
+// 将is向后移动一个字节（恢复前一个读取的字节）。返回is
+is.unget();
+
+// 将下一个字节作为int返回，但不从流中删除它
+is.peek();
+```
+
+#### 将字符放回输入流
+在读取下一个值之前，标准库只保证能正常调用 `putback` 或 `unget` 一次。
+
+#### 从输入操作返回的int值
+之所以返回 `int` 类型的值，是为了标记文件结尾。标准库使用负值表示文件结尾，当遇到文件结尾时，返回定义在 `cstdio` 头文件中的 `const` 常量 `EOF` 。
+
+#### 多字节操作
+比单字节操作更快，但也更容易出错，因为要自己管理缓冲区：
+```cpp
+// 从is中读取最多size个字节，并保存在字符数组sink中
+// 遇到字符delim、已经读取了size个字符、遇到文件结尾，读取停止
+// 遇到delim时，它被留在输入流中
+is.get(sink, size, delim);
+
+// 类似上个操作，但是它读取并丢弃delim
+is.getline(sink, size, delim);
+
+// 读取最多size个字节，存入字符数组sink中。返回is
+is.read(sink, size);
+
+// 返回上一个未格式化读取操作从is读取的字节数（如果上个操作是peek、unget、putback，则返回0）
+is.gcount();
+
+// 将字符数组source中的size个字节写入os。返回os
+os.write(source, size);
+
+// 读取并忽略最多size个字符，包括delim。和其他函数不同，它有默认参数
+is.ignore(size = 1, delim = EOF);
+```
+
+### 流随机访问
+标准库为所有流都定义了 `seek` 和 `tell` 函数，然而它们是否会真正工作取决于流绑定到哪个设备上，因为随机IO本质上还是依赖于操作系统的支持。比如在大多数系统中，绑定到 `cin` 、 `cout` 、 `cerr` 、 `clog` 的流不支持随机访问，可以对它们调用 `seek` 和 `tell` ，但它们会出错并将流状态设置为无效状态。实际上，通常 `istream` 和 `ostream` 对象都不支持随机访问，后续内容适用于 `fstream` 和 `sstream` 。
+
+#### seek和tell函数
+它们是以成员函数的形式定义的：
+```cpp
+// 以下的g表示get，p表示put，分别对应输入流和输出流
+
+// 返回一个输入流或输出流中的当前位置
+tellg();
+tellp();
+
+// 在一个输入流或输出流中将标记重定位到给定的绝对地址
+// pos通常是前一个tellg或tellp返回的值
+seekg(pos);
+seekp(pos);
+
+// 在一个输入流或输出流中将标记定位到from之前或之后off个字符，from可以是：
+// beg，偏移量相对于流开始位置
+// cur，偏移量相对于流当前位置
+// end，偏移量相对于流结束位置
+seekg(off, from);
+seekp(off, from);
+```
+逻辑上讲，输入流只能使用 `g` 版本，输出流只能使用 `p` 版本。而 `fstream` 和 `stringstream` 对象可以使用两个版本。
+
+#### 只有一个标记
+一个流实际上只有一个位置标记， `tellp()` 和 `tellg()` 的差异实际上是不明显的，不过编译器会阻止对输入流调用 `tellp()` 。而对于读写流，同时也只有一个标记存在，同时读和写必须使用 `seek` 来定位。
+
+#### 重定位标记
+`seekp(pos)` 中 `pos` 的类型是 `pos_type` ， `seekp(off, from)` 中 `off` 的类型是 `off_type` ， 这两个类型都是机器相关的，定义在头文件 `istream` 和 `ostream` 中。 `off_type` 值可以是正的也可以是负的，即允许在文件中向前或向后移动。
+
+#### 访问标记
+`tellp()` 和 `tellg()` 返回的值是 `pos_type` 类型。
