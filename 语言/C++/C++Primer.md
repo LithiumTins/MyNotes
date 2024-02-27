@@ -5887,3 +5887,683 @@ extern "C" void print(const char*);
 extern "C" void print(int);
 ```
 当然C++仍然可以自己重载名为 `print` 的函数。
+
+<br><br>
+
+# 标准库名字和头文件
+| 名字 | 头文件 |
+| --- | --- |
+| `abort` | `cstdlib` |
+| `accumulate` | `numeric` |
+| `allocator` | `memory` |
+| `array` | `array` |
+| `auto_ptr` | `memory` |
+| `back_inserter` | `iterator` |
+| `bad_alloc` | `new` |
+| `bad_array_new_length` | `new` |
+| `bad_cast` | `typeinfo` |
+| `begin` | `iterator` |
+| `bernoulli_distribution` | `random` |
+| `bind` | `functional` |
+| `bitset` | `bitset` |
+| `boolalpha` | `iostream` |
+| `cerr` | `iostream` |
+| `cin` | `iostream` |
+| `cmatch` | `algorithm` |
+| `copy` | `algorithm` |
+| `count` | `algorithm` |
+| `count_if` | `algorithm` |
+| `cout` | `iostream` |
+| `cref` | `functional` |
+| `csub_match` | `regex` |
+| `dec` | `iostream` |
+| `default_float_engine` | `random` |
+| `default_random_engine` | `random` |
+| `deque` | `deque` |
+| `domain_error` | `stdexcept` |
+| `end` | `iterator` |
+| `endl` | `iostream` |
+| `ends` | `iostream` |
+| `equal_range` | `algorithm` |
+| `exception` | `exception` |
+| `fill` | `algorithm` |
+| `fill_n` | `algorithm` |
+| `find` | `algorithm` |
+| `find_end` | `algorithm` |
+| `find_first_of` | `algorithm` |
+| `find_if` | `algorithm` |
+| `fixed` | `iostream` |
+| `flush` | `iostream` |
+| `for_each` | `algorithm` |
+| `forward` | `utility` |
+| `forward_list` | `forward_list` |
+| `free` | `cstdlib` |
+| `front_inserter` | `iterator` |
+| `fstream` | `fstream` |
+| `function` | `functional` |
+| `get` | `tuple` |
+| `getline` | `string` |
+| `greater` | `functional` |
+| `hash` | `functional` |
+| `hex` | `iostream` |
+| `hexfloat` | `iostream` |
+| `ifstream` | `fstream` |
+| `initializer_list` | `initializer_list` |
+| `inserter` | `iterator` |
+| `internal` | `iostream` |
+| `ios_base` | `ios_base` |
+| `isalpha` | `cctype` |
+| `islower` | `cctype` |
+| `isprint` | `cctype` |
+| `ispunct` | `cctype` |
+| `isspace` | `cctype` |
+| `istream` | `iostream` |
+| `istream_iterator` | `iterator` |
+| `isstringstream` | `sstream` |
+| `isupper` | `cctype` |
+| `left` | `iostream` |
+| `less` | `functional` |
+| `less_equal` | `functional` |
+| `list` | `list` |
+| `logic_error` | `stdexcept` |
+| `lower_bound` | `algorithm` |
+| `lround` | `cmath` |
+| `make_move_iterator` | `iterator` |
+| `make_pair` | `utility` |
+| `make_shared` | `memory` |
+| `make_tuple` | `tuple` |
+| `malloc` | `cstdlib` |
+| `map` | `map` |
+| `max` | `algorithm` |
+| `max_element` | `algorithm` |
+| `mem_fn` | `functional` |
+| `min` | `algorithm` |
+| `move` | `utility` |
+| `multimap` | `map` |
+| `multiset` | `set` |
+| `negate` | `functional` |
+| `noboolalpha` | `iostream` |
+| `normal_distribution` | `random` |
+| `noshowbase` | `iostream` |
+| `noshowpoint` | `iostream` |
+| `noskipws` | `iostream` |
+| `not1` | `functional` |
+| `nothrow` | `new` |
+| `nothrow_t` | `new` |
+| `nounitbuf` | `iostream` |
+| `nouppercase` | `iostream` |
+| `nth_element` | `algorithm` |
+| `oct` | `iostream` |
+| `ofstream` | `fstream` |
+| `ostream` | `iostream` |
+| `ostream_iterator` | `iterator` |
+| `ostringstream` | `sstream` |
+| `out_of_range` | `stdexcept` |
+| `pair` | `utility` |
+| `partial_sort` | `algorithm` |
+| `placeholders` | `functional` |
+| `placeholders::_1` | `functional` |
+| `plus` | `functional` |
+| `priority_queue` | `queue` |
+| `ptrdiff_t` | `cstddef` |
+| `queue` | `queue` |
+| `rand` | `cstdlib` |
+| `random_device` | `random` |
+| `range_error` | `stdexcept` |
+| `ref` | `functional` |
+| `regex` | `regex` |
+| `regex_constants` | `regex` |
+| `regex_error` | `regex` |
+| `regex_match` | `regex` |
+| `regex_replace` | `regex` |
+| `regex_search` | `regex` |
+| `remove_pointer` | `type_traits` |
+| `remove_reference` | `type_traits` |
+| `replace` | `algorithm` |
+| `replace_copy` | `algorithm` |
+| `reverse_iterator` | `iterator` |
+| `right` | `iostream` |
+| `runtime_error` | `stdexcept` |
+| `scientific` | `iostream` |
+| `set` | `set` |
+| `set_difference` | `algorithm` |
+| `set_intersection` | `algorithm` |
+| `set_union` | `algorithm` |
+| `setfill` | `iomanip` |
+| `setprecision` | `iomanip` |
+| `setw` | `iomanip` |
+| `shared_ptr` | `memory` |
+| `showbase` | `iostream` |
+| `showpoint` | `iostream` |
+| `size_t` | `cstddef` |
+| `skipws` | `iostream` |
+| `smatch` | `regex` |
+| `sort` | `algorithm` |
+| `sregex_iterator` | `regex` |
+| `ssub_match` | `regex` |
+| `stable_sort` | `algorithm` |
+| `stack` | `stack` |
+| `stoi` | `string` |
+| `strcmp` | `cstring` |
+| `strcpy` | `cstring` |
+| `string` | `string` |
+| `stringstream` | `sstream` |
+| `strlen` | `cstring` |
+| `strncpy` | `cstring` |
+| `strtod` | `string` |
+| `swap` | `utility` |
+| `terminate` | `exception` |
+| `time` | `ctime` |
+| `tolower` | `cctype` |
+| `toupper` | `cctype` |
+| `transform` | `algorithm` |
+| `tuple` | `tuple` |
+| `tuple_element` | `tuple` |
+| `tuple_size` | `tuple` |
+| `type_info` | `typeinfo` |
+| `unexpected` | `exception` |
+| `uniform_int_distribution` | `random` |
+| `uniform_real_distribution` | `random` |
+| `uninitialized_copy` | `memory` |
+| `uninitialized_fill` | `memory` |
+| `unique` | `algorithm` |
+| `unique_copy` | `algorithm` |
+| `unique_ptr` | `memory` |
+| `unitbuf` | `iostream` |
+| `unordered_map` | `unordered_map` |
+| `unordered_multimap` | `unordered_map` |
+| `unordered_multiset` | `unordered_set` |
+| `unordered_set` | `unordered_set` |
+| `upper_bound` | `algorithm` |
+| `uppercase` | `iostream` |
+| `vector` | `vector` |
+| `weak_ptr` | `memory` |
+
+<br><br>
+
+# 算法概览
+用到的参数解释如下：
+- `beg` 和 `end` 表示待处理的元素范围
+- `beg2` 为表示第二个输入序列开始位置的迭代器， `end2` 表示结束位置。如果没有 `end2` ，则 `beg2` 指向的序列至少和第一个序列一样长。两个序列元素类型不用匹配。
+- `dest` 表示目的序列的开始位置，目的序列需要保证能容纳算法的结果
+- `unaryPred` 和 `binaryPred` 是分别是一元和二元谓词，返回能转换为 `bool` 的类型
+- `comp` 是一个二元谓词，满足关键字序的要求
+- `unaryOp` 和 `binaryOp` 是一元和二元可调用对象
+
+## 查找对象的算法
+都有两个重载版本，一个使用 `==` ，另一个使用提供的谓词。
+
+#### 简单查找算法
+它们需要输入迭代器。前三个算法如果找不到则返回尾后迭代器：
+```cpp
+// 返回迭代器，指向输入序列中第一个等于val的元素
+find(beg, end, val);
+
+// 返回迭代器，指向第一个满足unaryPred的元素
+find_if(beg, end, unaryPred);
+
+// 返回迭代器，指向第一个不满足unaryPred的元素
+find_if_not(beg, end, unaryPred);
+
+// 返回计数器，指出val出现的次数
+count(beg, end, val);
+
+// 返回计数器，指出多少个元素满足unaryPred
+count_if(beg, end, unaryPred);
+
+// 返回bool值，指出是否所有元素都满足unaryPred
+all_of(beg, end, unaryPred);
+
+// 返回bool值，指出是否有元素满足unaryPred
+any_of(beg, end, unaryPred);
+
+// 返回bool值，指出是否没有元素满足unaryPred
+none_of(beg, end, unaryPred);
+```
+
+#### 查找重复值的算法
+它们需要前向迭代器。找不到时均返回尾后迭代器。
+```cpp
+// 返回迭代器，指向第一对相邻的重复元素
+adjacent_find(beg, end);
+adjacent_find(beg, end, binaryPred);    // 相等性判断使用binaryPred
+
+// 返回迭代器，指向的位置有count个连续相等元素
+search_n(beg, end, count, val);
+search_n(beg, end, count, val, binaryPred);    // 相等性判断使用binaryPred
+```
+
+#### 查找子序列的算法
+除了 `find_first_of` 第一个序列需要输入迭代器、第二个序列需要前向迭代器以外，其他算法都需要两个前向迭代器。找不到时或第二个序列为空时返回第一个序列的尾后迭代器。
+```cpp
+// 返回迭代器，指向第二个序列在第一个序列中第一次出现的位置
+search(beg, end, beg2, end2);
+search(beg, end, beg2, end2, binaryPred);    // 相等性判断使用binaryPred
+
+// 返回迭代器，指向第二个序列中任意元素在第一个序列中第一次出现的位置
+find_first_of(beg, end, beg2, end2);
+find_first_of(beg, end, beg2, end2, binaryPred);    // 相等性判断使用binaryPred
+
+// 返回迭代器，指向第二个序列在第一个序列中最后一次出现的位置
+find_end(beg, end, beg2, end2);
+find_end(beg, end, beg2, end2, binaryPred);    // 相等性判断使用binaryPred
+```
+
+### 其他只读算法
+它们要求前两个实参都是输入迭代器。 `equal` 和 `mismatch` 还接受额外的一个输入迭代器表示第二个范围的开始位置。
+```cpp
+// 对于每个元素，把它传递给unaryOp。如果迭代器具有写的能力，可以修改元素
+for_each(beg, end, unaryOp);
+
+// 比较两个序列的元素，返回一个迭代器的pair，表示两个序列中第一个不匹配的元素（如果都匹配，那么返回的第一个迭代器是第一个序列的尾后迭代器，第二个迭代器是从第二个序列的首元素偏移第一个序列长度的迭代器）
+mismatch(beg, end, beg2);
+mismatch(beg, end, beg2, binaryPred);    // 相等性判断使用binaryPred
+
+// 判断两个序列是否相等
+equal(beg, end, beg2);
+equal(beg, end, beg2, binaryPred);    // 相等性判断使用binaryPred
+```
+
+### 二分搜索算法
+以下算法都要求前向迭代器，然而如果提供的是随机访问迭代器，它们的性能会好很多。它们要求序列是有序的，前三组函数返回的迭代器指向合适的插入位置，使得插入以后序列仍然有序。如果给定的元素大于整个序列，返回尾后迭代器。每个算法都有两个版本，一个使用 `<` ，另一个使用提供的二元谓词。
+```cpp
+// 返回迭代器，指向第一个小于等于val的元素
+lower_bound(beg, end, val);
+lower_bound(beg, end, val, comp);    // 比较使用comp
+
+// 返回迭代器，指向第一个大于val的元素
+upper_bound(beg, end, val);
+upper_bound(beg, end, val, comp);    // 比较使用comp
+
+// 返回一个pair，第一个成员是lower_bound返回的迭代器，第二个成员是upper_bound返回的迭代器
+equal_range(beg, end, val);
+equal_range(beg, end, val, comp);    // 比较使用comp
+
+// 返回一个bool值，指出元素是否包含等于val的元素
+binary_search(beg, end, val);
+binary_search(beg, end, val, comp);    // 比较使用comp
+```
+
+### 写容器元素的算法
+
+#### 只写不读元素的算法
+要求输出迭代器。
+```cpp
+// 给序列中的每个元素赋值为val
+fill(beg, end, val);
+
+// 赋值cnt个元素为val。返回指向下一个元素的迭代器
+fill_n(dest, cnt, val);
+
+// 给序列中每个元素赋值，使用可调用对象Gen()产生值
+generate(beg, end, Gen);
+
+// 赋值cnt个元素，使用可调用对象Gen()产生值。返回指向下一个元素的迭代器
+generate_n(dest, cnt, Gen);
+```
+
+#### 使用输入迭代器的写算法
+读取一个输入序列，把值写入输出序列，分别需要输入迭代器和输出迭代器。
+```cpp
+// 拷贝输入序列的元素到输出序列
+copy(beg, end, dest);
+
+// 拷贝输入序列中满足unaryPred的元素到输出序列
+copy_if(beg, end, dest, unaryPred);
+
+// 从输入序列拷贝n个元素到输出序列
+copy_n(beg, n, dest);
+
+// 对输入序列每个元素调用std::move移动到输出序列
+move(beg, end, dest);
+
+// 对输入序列每个元素调用unaryOp后的结果写入输出序列
+transform(beg, end, dest, unaryOp);
+
+// 把两个输入序列的元素一一对应地应用binaryOp后的结果写入输出序列
+transform(beg, end, beg2, dest, binaryOp);
+
+// 把输入序列写入输出序列，其中等于old_val的元素替换为new_val
+replace_copy(beg, end, dest, old_val, new_val);
+
+// 把输入序列写入输出序列，其中满足unaryPred的元素替换为new_val
+replace_copy_if(beg, end, dest, unaryPred, new_val);
+
+// 两个输入序列都要有序。把有序归并后的序列写入输出序列
+merge(beg, end, beg2, end2, dest);
+merge(beg, end, beg2, end2, dest, comp);    // 比较使用comp
+```
+
+#### 使用前向迭代器的写算法
+要求前向迭代器。
+```cpp
+// 交换iter1和iter2指向的元素
+iter_swap(iter1, iter2);
+
+// 一一交换两个序列的元素，两个序列不能重叠，返回指向第二个序列的下一个元素的迭代器
+swap_ranges(beg, end, beg2);
+
+// 原地替换掉序列中等于old_val的元素为new_val
+replace(beg, end, old_val, new_val);
+
+// 原地替换掉序列中满足unaryPred的元素为new_val
+replace_if(beg, end, unaryPred, new_val);
+```
+
+#### 使用双向迭代器的写算法
+要求双向迭代器，因为需要反向移动。
+```cpp
+// 把输入序列拷贝到输出序列，但dest是输出序列的尾后迭代器，保持顺序相同
+copy_backward(beg, end, dest);
+
+// 同上，但使用std::move进行移动操作
+move_backward(beg, end, dest);
+
+// 只有一个序列，但前后的两个子序列分别有序，原地归并整个序列为有序序列，mid指向第二个子序列的开始位置
+inplace_merge(beg, mid, end);
+inplace_merge(beg, mid, end, comp);    // 比较使用comp
+```
+
+### 划分与排序算法
+它们都有两个版本，一个是稳定版本，保持相等元素的相对顺序，然而会更慢且消耗更多的内存；另一个是不稳定版本。
+
+#### 划分算法
+它们把序列划分成两个子序列，一个满足谓词，另一个不满足。要求双向迭代器。
+```cpp
+// 返回bool，检查是否所有满足unaryPred的元素都在不满足的元素之前
+is_partitioned(beg, end, unaryPred);
+
+// 把输入序列中满足unaryPred的元素输出到dest1，不满足的输出到dest2。返回迭代器pair，第一个指向最后一个拷贝到dest1的元素，第二个指向最后一个拷贝到dest2的元素
+partition_copy(beg, end, dest1, dest2, unaryPred);
+
+// 输入序列对于unaryPred需要是划分好的。返回满足unaryPred的范围的尾后迭代器。返回的迭代器指向第一个不满足unaryPred的元素，没有则返回end
+partition_point(beg, end, unaryPred);
+
+// 使用unaryPred划分序列，满足的元素放在序列开始，不满足的放在序列末尾。返回迭代器，指向最后一个满足unaryPred的元素的下一个位置。如果都不满足返回begin
+stable_partition(beg, end, unaryPred);
+partition(beg, end, unaryPred);    // 不稳定版本
+```
+
+#### 排序算法
+都有两个重载版本，一个使用 `<` ，另一个使用给定的谓词。只有 `partial_sort_copy` 返回指向目的位置的迭代器，其他都返回 `void` 。它们要求随机访问迭代器。
+```cpp
+// 排序整个范围
+sort(beg, end);
+stable_sort(beg, end);              // 稳定版本
+sort(beg, end, comp);               // 使用comp比较
+stable_sort(beg, end, comp);        // 稳定版本且使用comp比较
+
+// 返回bool值，指出序列是否有序
+is_sorted(beg, end);
+is_sorted(beg, end, comp);          // 使用comp比较
+
+// 返回迭代器，指向第一个不满足有序性的元素
+is_sorted_until(beg, end);
+is_sorted_until(beg, end, comp);            // 使用comp比较
+
+// 取得最小的mid-beg个元素，把它们排序好放在beg到mid的区间中，剩余元素无序放入mid到end的区间中
+partial_sort(beg, mid, end);
+partial_sort(beg, mid, end, comp);          // 使用comp比较
+
+// 如果目的范围更大，排序整个输入序列并拷贝到目的范围；如果输入范围更大，取数量能填满目的范围的最小元素放入目的范围并排序。返回一个迭代器，指向目的范围中已排序部分的尾后位置，如果放满了则返回destEnd
+partial_sort_copy(beg, end, destBeg, destEnd);
+partial_sort_copy(beg, end, destBeg, destEnd, comp);    // 使用comp比较
+
+// nth是指向输入序列中的迭代器，输入序列的元素以这个位置进行划分，最后左侧的元素都小于等于这个位置的元素，右侧的元素都大于等于这个位置的元素
+nth_element(beg, nth, end);
+nth_element(beg, nth, end, comp);    // 使用comp比较
+```
+
+### 通用重排操作
+
+#### 使用前向迭代器的重排算法
+```cpp
+// 从序列中删除值为val的元素。返回迭代器指向最后一个删除元素的下一个位置
+remove(beg, end, val);
+remove_copy(beg, end, dest, val);       // 输出到目的序列
+
+// 从序列中删除满足unaryPred的元素。返回迭代器指向最后一个删除元素的下一个位置
+remove_if(beg, end, unaryPred);
+remove_copy_if(beg, end, dest, unaryPred);      // 输出到目的序列
+
+// 消除相邻的重复元素，把后续的元素向前移动。返回迭代器指向最后一个保留元素的下一个位置
+unique(beg, end);
+unique(beg, end, binaryPred);                   // 使用binaryPred比较
+unique_copy(beg, end, dest);                    // 结果输出到目的序列
+unique_copy(beg, end, dest, binaryPred);        // 使用binaryPred比较，结果输出到目的序列
+
+// 向前轮转序列，使得最终mid指向的元素来到序列的开始。返回指向原先首元素的迭代器
+rotate(beg, mid, end);
+rotate_copy(beg, mid, end, dest);               // 结果输出到目的序列
+```
+
+#### 使用双向迭代器的重排算法
+因为需要反向处理输入序列，所以需要双向迭代器。
+```cpp
+// 翻转序列。reverse_copy返回指向拷贝到目的序列的下一个位置
+reverse(beg, end);
+reverse_copy(beg, end, dest);
+```
+
+#### 使用随机访问迭代器的重排算法
+因为需要随机重排元素，所以需要随机访问迭代器。
+```cpp
+// 打乱序列
+random_shuffle(beg, end);
+random_shuffle(beg, end, Rand);    // 使用可调用对象Rand，接受一个正整数，生成一个0到此数之间的服从均匀分布的随机数
+shuffle(beg, end, Rand);           // Rand满足均匀分布随机数生成器的要求
+```
+
+### 排列算法
+要求双向迭代器。
+```cpp
+// 返回bool值，指出第二个序列是否是第一个序列的某个排列
+is_permutation(beg, end, beg2);
+is_permutation(beg, end, beg2, binaryPred);    // 使用binaryPred进行相等性判断
+
+// 重排序列为下一个排列，如果已经是最后一个排列则重排为第一个排列并返回false，否则返回true
+next_permutation(beg, end);
+next_permutation(beg, end, comp);             // 使用comp进行比较
+
+// 重排序列为上一个排列，如果已经是第一个排列则重排为最后一个排列并返回false，否则返回true
+prev_permutation(beg, end);
+prev_permutation(beg, end, comp);             // 使用comp进行比较
+```
+
+### 有序序列的集合算法
+它们要求输入迭代器。
+```cpp
+// 如果第二个序列的元素都包含在第一个序列中，返回true
+includes(beg, end, beg2, end2);
+includes(beg, end, beg2, end2, comp);    // 使用comp进行比较
+
+// 合并两个序列，去重并排序，输出到目的序列
+set_union(beg, end, beg2, end2, dest);
+set_union(beg, end, beg2, end2, dest, comp);    // 使用comp进行比较
+
+// 创建两个序列的交集并排序，输出到目的序列
+set_intersection(beg, end, beg2, end2, dest);
+set_intersection(beg, end, beg2, end2, dest, comp);    // 使用comp进行比较
+
+// 创建两个序列的差集并排序，输出到目的序列
+set_difference(beg, end, beg2, end2, dest);
+set_difference(beg, end, beg2, end2, dest, comp);    // 使用comp进行比较
+
+// 创建两个序列的对称差集并排序，输出到目的序列
+set_symmetric_difference(beg, end, beg2, end2, dest);
+set_symmetric_difference(beg, end, beg2, end2, dest, comp);    // 使用comp进行比较
+```
+
+### 最小值和最大值
+第一组算法对值操作，而不是迭代器：
+```cpp
+// 返回两者中的较小值
+min(a, b);
+min(a, b, comp);    // 使用comp进行比较
+
+// 返回initializer_list中的最小值
+min(init_list);
+min(init_list, comp);    // 使用comp进行比较
+
+// 返回两者中的较大值
+max(a, b);
+max(a, b, comp);    // 使用comp进行比较
+
+// 返回initializer_list中的最大值
+max(init_list);
+max(init_list, comp);    // 使用comp进行比较
+
+// 返回pair，第一个成员是较小值，第二个成员是较大值
+minmax(a, b);
+minmax(a, b, comp);    // 使用comp进行比较
+
+// 返回pair，第一个成员是initializer_list中的最小值，第二个成员是最大值
+minmax(init_list);
+minmax(init_list, comp);    // 使用comp进行比较
+```
+第二组算法接受一个序列，要求输入迭代器：
+```cpp
+// 返回迭代器，指向序列中的最小值
+min_element(beg, end);
+min_element(beg, end, comp);    // 使用comp进行比较
+
+// 返回迭代器，指向序列中的最大值
+max_element(beg, end);
+max_element(beg, end, comp);    // 使用comp进行比较
+
+// 返回pair，第一个成员是最小值的迭代器，第二个成员是最大值的迭代器
+minmax_element(beg, end);
+minmax_element(beg, end, comp);    // 使用comp进行比较
+```
+
+#### 字典序比较
+两个序列都要求输入迭代器。
+```cpp
+// 返回bool值，表示第一个序列从字典序上是否小于第二个序列
+lexicographical_compare(beg, end, beg2, end2);
+lexicographical_compare(beg, end, beg2, end2, comp);    // 使用comp进行比较
+```
+
+### 数值算法
+定义在头文件 `numeric` 中。
+```cpp
+// 返回输入序列中所有值之和。和的初值为init，返回类型与init相同。
+accumulate(beg, end, init);
+accumulate(beg, end, init, binaryOp);    // 使用binaryOp求和
+
+// 返回两个序列的内积，即元素成对相乘的结果之和。初值为init，返回类型与init相同。
+inner_product(beg, end, beg2, init);
+inner_product(beg, end, beg2, init, binaryOp1, binaryOp2);    // 使用binaryOp1做加法，使用binaryOp2做乘法
+
+// 计算序列的前缀和（包含当前位置），结果输出到目的序列
+partial_sum(beg, end, dest);
+partial_sum(beg, end, dest, binaryOp);    // 使用binaryOp求和
+
+// 第一个元素照搬输入序列，后面的元素是输入序列中对应位置的元素减去前一个元素的值
+adjacent_difference(beg, end, dest);
+adjacent_difference(beg, end, dest, binaryOp);    // 使用binaryOp求差
+
+// 把序列变成从val开始的等差数列，步长为+1
+iota(beg, end, val);
+```
+
+## 随机数
+
+### 随机数分布
+分布模板具有默认模板参数，整型的默认参数是 `int` ，浮点型的默认参数是 `double` 。
+
+#### 均匀分布
+```cpp
+// 整型均匀分布，最小值为a，最大值为b
+uniform_int_distribution<IntT> u(a = 0, b = IntT_MAX);
+
+// 浮点型均匀分布，最小值为a，最大值为b
+uniform_real_distribution<RealT> u(a = 0.0, b = 1.0);
+```
+
+#### 伯努利分布
+```cpp
+// 伯努利分布，p是成功的概率
+bernoulli_distribution b(p = 0.5);
+
+// 二项分布，n是试验次数，p是成功的概率（共有几次成功）
+binomial_distribution<IntT> b(n = 1, p = 0.5);
+
+// 几何分布，p是成功的概率（直到第几次成功）
+geometric_distribution<IntT> g(p = 0.5);
+
+// 负二项分布，k是成功的次数，p是成功的概率（成功k次时，总共失败了几次）
+negative_binomial_distribution<IntT> n(k = 1, p = 0.5);
+```
+
+#### 泊松分布
+```cpp
+// 泊松分布，均值为double值x
+poisson_distribution<IntT> p(x);
+
+// 指数分布，参数lambda通过浮点值lam给出
+exponential_distribution<RealT> e(lam = 1.0);
+
+// 伽马分布，形状参数alpha为a，尺度参数beta为b
+gamma_distribution<RealT> g(a = 1.0, b = 1.0);
+
+// 韦伯分布，形状参数a，尺度参数b
+weibull_distribution<RealT> w(a = 0.0, b = 1.0);
+
+// 极值分布
+extreme_value_distribution<RealT> ev(a = 0.0, b = 1.0);
+```
+
+#### 正态分布
+```cpp
+// 正态分布，均值为m，标准差为s
+normal_distribution<RealT> n(m = 0.0, s = 1.0);
+
+// 对数正态分布，均值为m，标准差为s
+lognormal_distribution<RealT> ln(m = 0.0, s = 1.0);
+
+// 卡方分布，自由度为x
+chi_squared_distribution<RealT> c(x = 1.0);
+
+// 柯西分布，位置参数a，尺度参数b
+cauchy_distribution<RealT> c(a = 0.0, b = 1.0);
+
+// F分布，自由度参数m和n
+fisher_f_distribution<RealT> f(m = 1, n = 1);
+
+// t分布，自由度参数n
+student_t_distribution<RealT> t(n = 1);
+```
+
+#### 抽样分布
+```cpp
+// 离散分布，i和j是权重序列的输入迭代器，il是权重序列的列表花括号列表。权重要求可以转换为double类型
+discrete_distribution<IntT> d(i, j);
+discrete_distribution<IntT> d(il);
+
+// 分段常数分布，b、e、w是输入迭代器
+piecewise_constant_distribution<RealT> p(b, e, w);
+
+// 分段线性分布，b、e、w是输入迭代器
+piecewise_linear_distribution<RealT> p(b, e, w);
+```
+
+### 随机数引擎
+标准库定义的引擎和特例化版本如下：
+- `default_random_engine` ：使用引擎的类型别名，适用于大多数情况
+- `linear_congruential_engine` ：线性同余生成器
+    - `minstd_rand0` ：乘数为16807，模为2147483647，增量为0
+    - `minstd_rand` ：乘数为48271，模为2147483647，增量为0
+- `mersenne_twister_engine` ：梅森旋转生成器
+    - `mt19937` 为32位版本无符号生成器
+    - `mt19937_64` 为64位版本无符号生成器
+- `subtract_with_carry_engine` ：借位减法生成器
+    - `ranlux24_base` ：32位无符号版本
+    - `ranlux48_base` ：64位无符号版本
+- `discard_block_engine` ：引擎适配器，将底层引擎的结果丢弃。用要使用的底层引擎、块大小和旧块大小来参数化。
+    - `ranlux24` ：使用 `ranlux24_base` 作为底层引擎，块大小为223，旧块大小为23
+    - `ranlux48` ：使用 `ranlux48_base` 作为底层引擎，块大小为389，旧块大小为11
+- `independent_bits_engine` ：引擎适配器，生成指定位数的随机数。用要使用的底层引擎、结果的位数和保存生成的二进制位的无符号整型来参数化。（指定的位数要能存入无符号整型）
+- `shuffle_order_engine` ：引擎适配器，返回的就是底层引擎生成的数，但顺序不同。用要使用的底层引擎、和混洗的元素数目来参数化。
+    - `knuth_b` ：使用 `minstd_rand0` 作为底层引擎，混洗的元素数目为256
+    
