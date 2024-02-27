@@ -5270,3 +5270,620 @@ class Raccoon : public virtual Animal { /*...*/ };
 
 #### 构造函数与析构函数的次序
 当有多个虚基类的时候，按照派生列表中引入的顺序构造虚基类。合成的拷贝移动成员也按照这个顺序构造，销毁顺序则相反。
+
+<br><br>
+
+# 控制内存分配
+
+## 重载new和delete
+重载 `new` 和 `delete` 的方式实际上和其他运算符的重载方式不太相同。当使用 `new` 语句时：
+```cpp
+string *sp = new string("a value");
+string *arr = new string[10];
+```
+实际上执行了三步操作：
+1. `new` 表达式调用一个名为 `operator new` 或是 `operator new[]` 的标准库函数，它分配一个足够大的、原始的、未命名的内存空间以便存储特定类型的对象
+1. 编译器运行相应的构造函数以构造这些对象，并为其传入初始值
+1. 对象被分配了空间并构造完成，返回一个指向该对象的指针
+
+当使用 `delete` 语句时：
+```cpp
+delete sp;
+delete [] arr;
+```
+实际上执行了两步操作：
+1. 对 `sp` 所指的对象或者 `arr` 所指的数组中的元素执行对应的析构函数
+1. 编译器调用名为 `operator delete` 或 `operator delete[]` 的标准库函数释放内存空间
+
+如果希望控制内存分配的过程，实际上是需要重载 `operator new` 和 `operator delete` 函数。当我们定义了自己的版本，编译器将使用我们的版本。
+
+可以在全局作用域定义 `operator new` 和 `operator delete` ，也可以把它们定义成成员函数。当编译器遇到分配对象为类类型的 `new` 表达式时，它现在类及其基类中查找 `operator new` ；如果找不到编译器会转而到全局作用域查找；还是找不到则使用标准库版本。
+
+使用作用域运算符可以忽略定义在类中的版本，如 `::new` 只使用全局作用域中的 `operator new` 。
+
+#### operator new接口和operator delete接口
+标准库定义了 `operator new` 和 `operator delete` 的八个重载版本：
+```cpp
+// 可能抛出异常
+void *operator new(size_t);                 // 分配一个对象
+void *operator new[] (size_t);              // 分配一个数组
+void operator delete(void *) noexcept;     // 释放一个对象
+void operator delete[] (void *) noexcept;  // 释放一个数组
+
+// 承诺不抛出异常
+void *operator new(size_t, nothrow_t&) noexcept;
+void *operator new[] (size_t, nothrow_t&) noexcept;
+void operator delete(void *, size_t) noexcept;
+void operator delete[] (void *, size_t) noexcept;
+```
+类型 `nothrow_t` 是定义在头文件 `new` 中的一个结构体，不包含任何成员。 `new` 头文件还定义了一个名为 `nothrow` 的 `const` 对象，可以使用这个对象请求不抛出异常的版本。
+
+与析构函数类似， `operator delete` 也不允许抛出异常，重载它时必须使用 `noexcept` 说明符。
+
+用户可以自定义以上版本中的任意一个，自定义的版本必须位于全局作用域或类作用域中。把它们定义成类的成员时，它们是隐式静态的（也可以显式声明 `static` ，没有区别），这是因为它们需要在类对象存在前和销毁后被调用。
+
+对于 `operator new` 和 `operator new[]` ，它们必须返回 `void *` 类型，接受一个 `size_t` 类型表示需要分配空间大小的参数，不能有默认实参。编译器会自动传入参数。
+
+如果想要给 `operator new` 提供额外的形参，则需要借助 `new` 的定位形式将实参传给新增的形参。虽然几乎可以自定义任何形参的 `operator new` ，但其中有一个函数不可以被重载：
+```cpp
+void *operator new(size_t, void *);
+```
+这个形式提供给标准库使用，不允许用户重新定义。
+
+对于 `operator delete` 和 `operator delete[]` ，返回类型必须是 `void` ，第一个形参必须是 `void*` ，指向待释放的内存。也可以接受第二个 `size_t` 类型的形参，表示待释放空间的字节数，这用于释放继承体系中的对象，结合虚析构函数使用。
+
+#### malloc和free函数
+自行分配内存可以使用定义在 `cstdlib` 中的 `malloc` 和 `free` 函数。
+
+### 定位new表达式
+尽管 `operator new` 和 `operator delete` 函数一般用于 `new` 表达式，但实际上用户代码也可以直接调用它们。它们分配回来的原始内存，需要在其上使用定位 `new` 来构造对象：
+```cpp
+new (place_address) type
+new (place_address) type (initializers)
+new (place_address) type [size]
+new (place_address) type [size] { braced initializer list }
+```
+其中 `place_address` 是指向原始内存的指针， `initializers` 是传递给构造函数的参数列表。
+
+定位 `new` 使用 `operator new(size_t, void*)` ，它不进行内存分配，只是简单地返回指针实参。定位 `new` 表达式获得指针实参以后，在指定的地址上构造对象。
+
+定位 `new` 和 `allocator` 的 `construct` 很像，但传递给定位 `new` 的指针甚至不需要是动态内存。
+
+#### 显式的析构函数调用
+为了实现类似于 `allocator` 的 `destroy` 函数类似的效果，可以显式调用析构函数：
+```cpp
+string *sp = new string("a value");
+sp->~string();
+```
+这会调用析构函数，但是并不会释放内存。后续还可以继续使用。
+
+## 运行时类型识别
+简称**RTTI**，由两个运算符实现：
+- `typeid` 运算符，返回表达式的类型
+- `dynamic_cast` 运算符，用于将基类的指针或引用安全地转换成派生类的指针或引用
+
+一般来说，应该尽量使用虚函数，只有在必要的时候才使用RTTI。
+
+### dynamic_cast运算符
+使用形式如下：
+```cpp
+dynamic_cast<type*>(e);         // e必须是一个有效的指针
+dynamic_cast<type&>(e);         // e必须是一个左值
+dynamic_cast<type&&>(e);        // e不能是左值
+```
+其中 `type` 必须是类类型，并且通常它应该具有虚函数。在这三种形式中， `e` 的类型必须满足以下条件之一：
+- `e` 类型是 `type` 类型的公有派生类
+- `e` 类型是 `type` 类型的公有基类
+- `e` 类型就是 `type` 类型
+
+如果不满足任何一条，那么转换失败，如果是指针类型的转换则结果为 `0` ；如果是引用类型的转换则抛出 `bad_cast` 异常。
+
+#### 指针类型的dynamic_cast
+例如：
+```cpp
+if (Derived *dp = dynamic_cast<Derived*>(bp)) {
+    // bp指向的是Derived对象
+} else {
+    // bp指向的是Base对象
+}
+```
+可以对空指针执行 `dynamic_cast` ，结果是一个所需类型空指针。
+
+#### 引用类型的dynamic_cast
+当转换失败时，抛出定义在 `typeinfo` 头文件中的 `bad_cast` 异常：
+```cpp
+void f(const Base &b)
+{
+    try {
+        const Derived &d = dynamic_cast<const Derived&>(b);
+        // ...
+    } catch (bad_cast) {
+        // b不是Derived的引用
+    }
+}
+```
+
+### typeid运算符
+使用方式是 `typeid(e)` ， `e` 可以是任意表达式或类型名。 `typeid` 返回一个常量对象的引用，它是定义在头文件 `type_info` 中的标准库类型 `type_info` 或者是 `type_info` 的公有派生类类型。
+
+`typeid` 忽略顶层 `const` ，也忽略引用。然而当它作用于数组或函数时，不会退化成指针。
+
+当运算对象不是类类型或者是不含虚函数的类类型时， `typeid` 返回的是表达式的静态类型。当运算对象是含有虚函数的类的左值时， `typeid` 返回的是运行时对象的动态类型，直到运行期才能确定。
+
+#### 使用typeid运算符
+```cpp
+Derived *dp = new Derived;
+Base *bp = dp;
+
+if (typeid(*bp) == typeid(*dp)) {
+    // bp和dp指向同一类型的对象
+}
+
+if (typeid(*bp) == typeid(Derived)) {
+    // bp指向Derived对象
+}
+```
+注意， `typeid` 应该作用于对象而不是指针，故不能写成：
+```cpp
+if (typeid(bp) == typeid(Derived)) {
+    // 错误
+}
+```
+当作用于指针时，返回的是指针本身的静态类型。
+
+当运算对象含有虚函数时， `typeid` 会对表达式进行求值；否则，编译器不需要对其进行求值也能确定它的类型。因此，如果执行 `typeid(*p)` ，当 `*p` 的静态类型和动态类型一致时，它指向无效的地址也不会有问题；否则 `p` 必须指向一个有效的对象，当 `p` 是一个空指针时， `typeid` 会抛出 `bad_typeid` 异常。
+
+### 使用RTTI
+例如在一个继承体系中尝试添加一个相等性判断（类型不同则不同，类型相同则比较成员），如果使用虚函数的话就只能把基类类型作为参数，无法使用派生类的成员，这时可以使用RTTI。
+
+#### 类的层次关系
+如以下两个类：
+```cpp
+class Base {
+    friend bool operator==(const Base&, const Base&);
+public:
+    // Base的接口成员
+protected:
+    virtual bool equal(const Base&) const;
+    // Base的数据成员和其他用于实现的成员
+};
+
+class Derived : public Base {
+public:
+    // Derived的接口成员
+protected:
+    bool equal(const Base&) const;
+    // Derived的数据成员和其他用于实现的成员
+};
+```
+
+#### 类型敏感的相等运算符
+先检查动态类型是否相同，然后虚调用 `equal` 函数:
+```cpp
+bool operator==(const Base &lhs, const Base &rhs)
+{
+    return typeid(lhs) == typeid(rhs) && lhs.equal(rhs);
+}
+```
+
+#### 虚函数equal
+继承体系中的各个类为了使用自己的成员，需要首先把参数转换成自己的类型：
+```cpp
+bool Derived::equal(const Base &rhs) const
+{
+    auto r = dynamic_cast<const Derived&>(rhs);
+    // 比较并返回结果
+}
+```
+虚调用保证了类型的正确性，类型转换一定会成功。
+
+#### 基类equal函数
+因为参数本身就是基类的类型，所以不需要进行类型转换：
+```cpp
+bool Base::equal(const Base &rhs) const
+{
+    return *this == rhs;
+    // 比较并返回结果
+}
+```
+
+### type_info类
+这个类的精确定义根据编译器的不同而略有差异，C++标准规定它一定要定义在头文件 `typeinfo` 中，且至少包含以下成员：
+```cpp
+// 如果type_info对象t1和t2表示同一种类型，返回true；否则返回false
+t1 == t2;
+
+// 如果type_info对象t1和t2表示不同的类型，返回true；否则返回false
+t1 != t2;
+
+// 返回一个C风格字符串，表示类型名字的可打印形式。类型名字的生成方式因系统而异
+t.name();
+
+// 返回一个bool值，表示t1是否位于t2之前。这个前后顺序由编译器决定
+t1.before(t2);
+```
+除了这些，因为 `type_info` 类一般作为基类出现，它应该提供一个公有虚析构函数。当编译器希望提供额外的类型信息的时候，它一般在派生类中完成。
+
+`type_info` 没有默认构造函数，它的拷贝和移动构造函数以及赋值运算符都被定义成删除的，所以无法定义、拷贝、移动、赋值 `type_info` 对象。获得 `type_info` 对象的唯一方法是使用 `typeid` 运算符。
+
+`name()` 返回的名字只要求不同的类型有不同的名字。
+
+## 枚举类型
+枚举类型可以把一组整型常量组织在一起，它也是字面值常量类型。旧版本的C++只有不限定作用域的枚举类型，C++11引入了**限定作用域的枚举类型**。定义限定作用域的枚举类型语法如下：
+```cpp
+enum class open_modes { input, output, append };    // 或者enum struct
+```
+花括号里的称为**枚举成员**。定义不限定作用域的枚举类型语法如下：
+```cpp
+enum color { red, yellow, green };
+enum { floatPrec = 6, doublePrec = 10, doublePrec = 16 };   // 名字是可选的
+```
+
+#### 枚举成员
+在限定作用域的枚举类型中，枚举成员的名字在枚举类型的作用域外是不可见的；反之，在不限定作用域的枚举类型中，枚举成员的作用域和枚举类型本身的作用域相同。例如：
+```cpp
+enum color { red, yellow, green };              // 不限定作用域
+enum stoplight { red, yellow, green };          // 错误：重复定义枚举成员
+enum class peppers { red, yellow, green };      // 正确：在枚举作用域中隐藏了color的枚举成员
+
+color eyes = green;                             // 正确：color::green
+peppers p = green;                              // 错误：peppers::green不可见，并且color::green类型不匹配
+
+color hair = color::red;                        // 正确：显式访问color::red
+peppers p2 = peppers::red;                      // 正确：通过作用域运算符访问
+```
+默认情况下，枚举值从 `0` 开始依次加 `1` ，但是可以显式地指定值：
+```cpp
+enum class intTypes {
+    charTyp = 8, shortTyp = 16, intTyp = 16, longTyp = 32, long_longTyp = 64
+};
+```
+指定的值必须是常量表达式，实际上枚举成员本身就是常量表达式，可以定义 `constexpr` 的枚举变量：
+```cpp
+constexpr intTypes charbits = intTypes::charTyp;
+```
+同时也可以把枚举成员作为 `case` 标签。
+
+#### 和类一样，枚举也定义新的类型
+除了匿名的枚举类型，可以创建枚举类型的对象：
+```cpp
+open_modes om = 2;                      // 错误：2不属于类型open_modes
+open_modes om = open_modes::input;      // 正确
+```
+不限定作用域的枚举类型的枚举成员可以转换成对应的整型值：
+```cpp
+int i = color::red;                     // 正确
+int j = peppers::red;                   // 错误：限定作用域的枚举类型不能隐式转换成int
+```
+
+#### 指定enum的大小
+尽管看起来 `enum` 定义了一个唯一的类型，实际上它是由整型来表示的。在C++11中，可以指定 `enum` 使用哪种整型来表示：
+```cpp
+enum intValues : unsigned long long {
+    charTyp = 255, shortTyp = 65535, intTyp = 65535, 
+    longTyp = 4294967295UL, long_longTyp = 18446744073709551615ULL
+};
+```
+默认情况下，限定作用域的 `enum` 成员的类型是 `int` ；不限定作用域的 `enum` 则没有默认类型，只知道使用的类型足够大来容纳枚举成员。
+
+如果指定了 `enum` 的类型，并且某个成员的值超出了这个类型的范围，那么编译器会报错。
+
+#### 枚举类型的前置声明
+C++11允许提前声明 `enum` 并延后定义，此时必须指定 `enum` 的大小：
+```cpp
+enum intValues : unsigned long long;    // 不限定作用域的枚举类型必须显式指定类型
+enum class open_modes;                  // 限定作用域的枚举类型可以使用默认类型int
+```
+后续定义的时候需要保持和声明的一致，如是否限定作用域、 `enum` 的类型等。
+
+#### 形参匹配与枚举类型
+初始化一个枚举对象只能用同类型的另一个枚举对象或者枚举的成员，因此即使某个整型值恰好等于枚举成员的取值，也不能用这个整型值来初始化枚举对象。
+
+然而，可以把枚举成员传递给整型实参，枚举成员会提升为 `int` 或更大的类型，具体由枚举类型的潜在类型决定。
+
+## 类成员指针
+**成员指针**是指可以指向类的非静态成员的指针，它并不指向一个具体的对象，而是类的成员。由于静态成员不依赖于具体的对象，它的指针直接指向它本身，和普通的指针没有区别。
+
+初始化成员指针时，它指向一个成员，无需提供给它一个类对象。直到使用它时才提供给它一个对象。
+
+### 数据成员指针
+成员指针的定义如下：
+```cpp
+// 指向Screen类的string成员contents的指针pdata
+const string Screen::*pdata = &Screen::contents;
+```
+在C++11中更简单的写法是借助 `auto` 或 `decltype` ：
+```cpp
+auto pdata = &Screen::contents;
+```
+
+#### 使用成员指针
+成员指针使用运算符 `.*` 或 `->*` 来访问成员：
+```cpp
+Screen myScreen, *pScreen = &myScreen;
+auto s = myScreen.*pdata;
+auto s2 = pScreen->*pdata;
+```
+
+#### 返回数据成员指针的函数
+访问控制规则仍然有效，外部无法直接获得私有成员的指针，此时类可以自己定义一个接口：
+```cpp
+class Screen {
+public:
+    static const std::string Screen::*data() { return &Screen::contents; }
+};
+```
+当得到这个指针以后，即便是私有成员也可以通过它访问。
+
+### 成员函数指针
+成员函数指针的定义如下：
+```cpp
+char (Screen::*pmf2)(Screen::pos, Screen::pos) const;
+pmf2 = &Screen::get;    // 取地址运算符不可省略，和普通函数指针不同
+```
+如果有 `const` 限定符和引用限定符，也需要在成员函数指针中指出。
+
+#### 使用成员函数指针
+```cpp
+Screen myScreen, *pScreen = &myScreen;
+char c1 = (myScreen.*pmf)();
+char c2 = (pScreen->*pmf2)(0, 0);
+```
+这里指针外层的括号是不可省略的，因为调用运算符优先级要更高。
+
+#### 使用成员指针的类型别名
+可以使用类型别名或 `typedef` 来简化成员指针的定义：
+```cpp
+using Action = char (Screen::*)(Screen::pos, Screen::pos) const;
+```
+
+#### 成员指针函数表
+把成员函数指针放进一个数组即可。
+
+### 将成员函数用作可调用对象
+因为成员函数指针需要提供一个对象给它，所以它不是一个可调用对象，不能直接传递给标准库算法。
+
+#### 使用function生成一个可调用对象
+```cpp
+// empty的参数是隐式的this指针，这里显式地告知function
+function<bool (const string&)> fcn = &string::empty;
+// 在vector<string>上操作
+find_if(vec.begin(), vec.end(), fcn);
+```
+这样，可以认为 `function` 在内部执行了：
+```cpp
+if (fcn(*it))
+```
+本质上，这相当于它做了：
+```cpp
+if (((*it).*p)())
+```
+这里因为 `*it` 的类型是 `string` 所以 `fcn` 接受的参数是 `const string&` 类型。而对于 `vector<string*>` 上的操作，则可以如下：
+```cpp
+vector<string*> pvec;
+function<bool (const string*)> fp = &string::empty;
+find_if(pvec.begin(), pvec.end(), fp);
+```
+
+#### 使用mem_fn生成一个可调用对象
+上面对于 `function` 的使用使得我们必须指定调用方式。C++11提供了标准库功能 `mem_fn` 来让编译器推断成员的类型，它也定义在 `functional` 中，可以从成员生成一个可调用对象：
+```cpp
+find_if(vec.begin(), vec.end(), mem_fn(&string::empty));
+```
+这样得到的可调用对象可以通过两种方式调用：
+```cpp
+auto f = mem_fn(&string::empty);
+f(*svec.begin());       // 传入一个对象
+f(&svec[0]);            // 传入一个指针
+```
+可以简单地认为它有接受两种参数的重载版本。
+
+#### 使用bind生成一个可调用对象
+也可以使用 `bind` 解决上述问题：
+```cpp
+find_if(vec.begin(), vec.end(), bind(&string::empty, _1));
+```
+和 `mem_fn` 一样， `bind` 生成的可调用对象也可以接受两种参数。
+
+## 嵌套类
+类可以定义在另一个类的内部，此时它被称为**嵌套类**或**嵌套类型**。它与外层的类基本没什么关系，连两个类的对象也是独立的，即嵌套类的对象不含任何外层类的成员；外层类的对象也不含任何嵌套类的成员。
+
+嵌套类的名字仅在外层类的作用域可见。
+
+嵌套类和外层类互相对对方的成员没有特殊的访问权限。
+
+本质上，相当于在外层类中定义了一个新的类类型。
+
+#### 声明一个嵌套类
+```cpp
+class TextQuery {
+public:
+    class QueryResult;      // 声明一个嵌套类
+};
+```
+
+#### 在外层类之外定义一个嵌套类
+```cpp
+class TextQuery::QueryResult {
+    // ...
+};
+```
+
+#### 定义嵌套类的成员
+在全局作用域中，需要：
+```cpp
+TextQuery::QueryResult::QueryResult() { /*...*/ }
+```
+
+#### 嵌套类的静态成员定义
+```cpp
+int TextQuery::QueryResult::static_mem = 1024;
+```
+
+#### 嵌套类作用域中的名字查找
+一般的名字查找规则也适用，不过对于嵌套类还会查找外层类的作用域。
+
+## union：一种节省空间的类
+**联合**是一种特殊的类，它可以有多个数据成员，但某一时刻只有一个数据成员可以有值，给某个成员赋值以后，其他成员就变成未定义状态。分配给联合的空间大小至少要能容纳它的最大成员。联合也是一种新的类型。
+
+联合适用于一些类的特性，但不是所有。它不能有引用成员。C++11中，含有构造函数或析构函数的类类型也可以作为联合的成员。联合也具有访问控制标记，但默认情况下是 `public` 的。
+
+联合可以定义包括构造函数和析构函数在内的成员函数，但它不能继承自其他类也不能作为基类，所以不能有虚函数。
+
+#### 定义union
+```cpp
+union Token {
+    char cval;
+    int ival;
+    double dval;
+};
+```
+
+#### 使用union
+默认情况下， `union` 对象是不初始化的，可以像初始化聚合类一样用花括号初始化：
+```cpp
+Token first_token = {'a'};      // 如果提供初始值，则被用于初始化第一个成员
+```
+可以使用成员访问运算符访问它的成员：
+```cpp
+last_token.ival = 42;
+
+Token *pt = &first_token;
+pt->dval = 3.14159;
+```
+
+#### 匿名union
+是一个未命名的联合，编译器自动为它创建一个对象，它的成员可以直接访问，它不能有私有或受保护成员，也不能定义成员函数。
+
+#### 含有类类型成员的union
+C++早期版本中，联合不能含有定义了构造函数或拷贝控制成员的类类型成员，C++11中可以。然而当需要把联合的值改为这样的类类型成员时，需要显式调用构造函数；改为其他值时，需要显式调用析构函数。
+
+如果联合只包含内置类型的成员，编译器按成员次序依次合成默认构造函数或拷贝控制成员。如果它含有类类型的成员，并且该类自定义了默认构造函数或拷贝控制成员，则编译器将为联合合成删除的函数。
+
+#### 使用类管理union成员
+对于有类成员的联合来说，管理好它非常困难。一般会把它以匿名联合的方式内嵌在类中，然后借助类的拷贝赋值运算符来处理联合的类类型成员的构造函数和析构函数调用。
+
+为了确定当前的类型，可以使用一个独立的对象来记录当前的类型，这通常称为联合的**判别式**。
+
+## 局部类
+类可以定义在某个函数的内部，称为**局部类**。这个定义只在该函数的作用域内可见。
+
+和嵌套类不同，它的成员受到严格的限制。它的所有成员必须完整地定义在类的内部，一般来说会写得比较简短，否则可读性直线下降。并且局部类不允许声明静态数据成员，因为无法定义它。
+
+#### 局部类不能使用函数作用域中的变量
+局部类不能使用外层函数定义的局部变量，它只能使用外层作用域的类型名、静态变量以及枚举成员，或者全局的变量。
+
+#### 常规的访问保护规则对局部类同样适用
+外层函数对局部类的私有成员没有特殊访问权限。局部类可以把外层函数声明为友元。
+
+#### 局部类中的名字查找
+和其他的类相似。
+
+#### 嵌套的局部类
+局部类里还可以嵌套其他类，但是这些类的定义需要在同一个函数内完成。局部类的嵌套类也是一个局部类，当定义嵌套类时需要完整定义它的所有成员。
+
+## 固有的不可移植的特性
+为了支持低层编程，C++有一些机器相关的特性。其中位域和 `volatile` 限定符是C++从C语言继承来的。
+
+### 位域
+类可以把非静态数据成员定义成**位域**，它含有一定数量的二进制位，位域在内存中的布局是机器相关的。
+
+位域的类型必须是整型或枚举类型。因为带符号位域的行为是实现相关的，所以通常使用无符号类型。声明方式是成员名字之后跟一个冒号和一个常量表达式，表示成员占用的位数：
+```cpp
+typedef unsigned int Bit;
+
+class File {
+    Bit mode: 2;
+    Bit modified: 1;
+    Bit prot_owner: 3;
+    Bit prot_group: 3;
+    Bit prot_world: 3;
+    // ...
+};
+```
+如果可能的话，把位域在类的内部连续定义，压缩它们到同一整型的相邻位，实现压缩存储。当然能否压缩和如何压缩则是机器相关的。
+
+取地址运算符不能用于位域，故任何指针都不能指向位域。
+
+#### 使用位域
+像正常成员一样使用即可，一般用位运算符操作它们。
+
+#### volatile限定符
+`volatile` 的确切含义与机器相关，只能通过阅读编译器文档来理解。如果需要让使用了 `volatile` 的程序一直到新机器或新编译器后仍有效，通常需要对程序做出某些改变。
+
+直接处理硬件的程序可能遇到一些数据对象，它们的值可能会被程序本身以外改变，这时把对象声明成 `volatile` 告诉编译器不应该优化这样的对象。如：
+```cpp
+volatile int display_register;
+```
+`const` 和 `volatile` 互不干涉，它们可以一起使用。
+
+成员函数可以定义为 `volatile` 的，只有 `volatile` 成员函数才能被 `volatile` 对象调用。
+
+对于指针和引用，同样有顶层 `volatile` 和底层 `volatile` 的分别。
+
+#### 合成的拷贝对volatile对象无效
+合成的成员参数是非 `volatile` 对象的引用，因为不能把 `volatile` 对象的引用绑定到非 `volatile` 对象上，所以合成成员对 `volatile` 对象无效。
+
+如果一定需要它们的拷贝等操作，需要自行定义。
+
+### 链接指示：extern "C"
+C++有时需要调用其他语言编写的函数，最常见的是调用C语言编写的函数。其他语言的函数名字需要在C++中声明，需要给出返回类型和形参列表。C++使用**链接指示**指出非C++函数使用的语言。
+
+需要有权访问对方语言的编译器，并且这个编译器需要与当前C++编译器兼容。
+
+#### 声明一个非C++的函数
+链接指示有两种形式：单个的或符合的。它不能出现在类定义或函数定义的内部。同样的链接指示必须出现在函数的每个声明中。例如头文件 `cstring` 中某些C函数的声明：
+```cpp
+// 单语句链接指示
+extern "C" size_t strlen(const char *);
+
+// 符合语句链接指示
+extern "C" {
+    int strcmp(const char *, const char *);
+    char *strcat(char *, const char *);
+}
+```
+这里 `extern` 后方的字符串字面值指出编写函数所用的语言，编译器应该支持该语言的链接指示。
+
+#### 链接指示与头文件
+花括号只起一个聚合的作用，不是一个作用域，里面的函数声明是可见的。可以一次性引入一个头文件的函数声明：
+```cpp
+extern "C" {
+#include <string.h>
+}
+```
+此时头文件中的所有普通函数声明都被认为是对应的语言编写。链接指示可以嵌套。
+
+#### 指向extern "C"函数的指针
+指向链接指示的函数也需要使用链接指示：
+```cpp
+extern "C" void (*pf)(int);
+```
+它和指向C++函数的函数指针不是同样的类型，不能互相赋值，尽管有的编译器支持这么做。
+
+#### 链接指示对整个声明都有效
+如：
+```cpp
+extern "C" void f1(void(*)(int));
+```
+需要给它传递一个指向 `extern "C"` 函数的指针。因为链接指示对整个声明生效，如果需要给C++函数传递一个指向C函数的指针，需要：
+```cpp
+extern "C" typedef void FC(int);
+
+void f2(FC *);
+```
+
+#### 导出C++函数到其他语言
+使用链接指示进行函数定义可以让C++编写的函数在其他语言中可用：
+```cpp
+extern "C" double calc(double dparm) { /*...*/ }
+```
+编译器会生成相应语言的代码。然而这样的函数因为语言之间的交互，返回类型和形参类型都会受到很大的限制。
+
+#### 重载函数与链接指示
+链接指示的函数是否可以重载取决于目标语言是否支持重载，如C语言就不支持重载，那么下面的代码会报错：
+```cpp
+extern "C" void print(const char*);
+extern "C" void print(int);
+```
+当然C++仍然可以自己重载名为 `print` 的函数。
