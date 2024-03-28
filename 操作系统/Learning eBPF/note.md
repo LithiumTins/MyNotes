@@ -338,3 +338,417 @@ b.trace_print()
 从内核4.2版本开始，eBPF开始支持尾调用。很长一段时间中，尾部调用和BPF子程序并不兼容，不过在内核5.10版本解决了这个问题。（从BPF子程序进行尾调用需要JIT编译器支持）
 
 尾部调用最多可以链式组合到33次，每个eBPF程序可以复杂到100万条指令，从而eBPF可以完成非常复杂的功能。
+
+<br><br>
+
+# 3 - eBPF程序剖析
+eBPF程序从C语言被编译为eBPF字节码，然后被内核JIT编译为本地机器码。从概念上讲，eBPF字节码在内核的eBPF虚拟机中运行。
+
+## eBPF虚拟机
+eBPF虚拟机接收eBPF字节码，把它转换为CPU上运行的本机机器指令。早期的eBPF字节码在内核中解释执行，每次运行内核都检查指令并转换为机器码再执行。处于性能考虑以及避免eBPF解释器的Spectre漏洞，解释执行已经由JIT编译取代，从而字节码只需在加载时被编译一次。
+
+eBPF字节码由一组指令组成，它们作用于eBPF虚拟寄存器。指令集和寄存器模型的设计准则是尽可能匹配常见的CPU架构。
+
+### eBPF寄存器
+有10个通用寄存器，编号为0-9，还有一个寄存器10用于栈指针（只能读取），它们都是软件模拟的，Linux内核头文件 `include/uapi/linux/bpf.h` 用枚举定义了从 `BPF_REG_0` 到 `BPF_REG_10` 来表示它们。eBPF开始执行前，上下文参数被放入寄存器1，寄存器0用于函数返回值。如果eBPF程序调用其他eBPF程序，寄存器1-5被用于传递参数。
+
+### eBPF指令
+`linux/bpf.h` 还定义了一个名为结构体来表示一条eBPF指令：
+```c
+struct bpf_insn {
+    // 操作码表示要执行的操作，实际上具体行为可能还取决于其他字段，如imm有时可以指定算术运算类型（ADD、AND）
+	__u8	code;		/* opcode */
+    // 不同的操作可能涉及最多两个寄存器。
+	__u8	dst_reg:4;	/* dest register */
+	__u8	src_reg:4;	/* source register */
+    // 根据操作的不同，可能会有一个偏移值和/或一个“立即数”整数值。
+	__s16	off;		/* signed offset */
+	__s32	imm;		/* signed immediate constant */
+};
+```
+整个结构体的长度为8字节，有时候一条指令可能塞不进8字节，那么可能需要16字节的宽指令编码。加载到内核中时，eBPF程序的字节码由一个个 `bpf_insn` 结构体表示，验证器检查它们的安全性。
+
+操作有如下几类：
+- 加载值到寄存器
+- 把寄存器的值存到内存
+- 算术运算
+- 跳转指令
+
+## 用于网络接口的eBPF "Hello World"
+接下来看一个例子，它在网络数据报到达时打印一行消息。
+
+eBPF程序如下：
+```c
+#include <linux/bpf.h>
+#include <bpf/bpf_helpers.h>
+
+// eBPF程序可以使用全局变量
+int counter = 0;
+
+// 宏SEC()定义了一个名为xdp的section，目前可以简单地认为它定义了一个XDP类型的eBPF程序
+SEC("xdp")
+
+// 使用bpf_printk来输出文本、递增counter、然后返回值XDP_PASS（通知内核正常处理这个网络数据包）
+int hello(struct xdp_md *ctx) {
+    bpf_printk("Hello World %d", counter);
+    counter++;
+    return XDP_PASS;
+}
+
+// 使用SEC()宏定义许可证，一些辅助函数要求GPL许可证，否则程序会被拒绝
+char LICENSE[] SEC("license") = "Dual BSD/GPL";
+```
+这里使用了 `bpf_printk()` 而不是上一章中的 `bpf_trace_printk()` 。实际上BCC的版本为 `bpf_trace_printk()` ，libbpf的版本为 `bpf_printk()` ，它们都是对内核函数 `bpf_trace_printk()` 的封装。
+
+p.s.有些网络适配器支持把XDP程序下载到其中，从而让网络数据包的处理甚至不需要经过CPU
+
+## 编译eBPF目标文件
+上面的eBPF程序需要编译成eBPF字节码，这可以通过LLVM的Clang编译器来完成，要求编译的时候指定选项 `-target bpf` 。如这个Makefile：
+```makefile
+hello.bpf.o: %.o: %.c
+	clang \
+	    -target bpf \
+		-I/usr/include/$(shell uname -m)-linux-gnu \
+		-g \
+	    -O2 -c $< -o $@
+```
+这里 `-g` 是可选地，用于生成调试信息。
+
+## 检查eBPF目标文件
+检查文件的内容：
+```shell
+$ file hello.bpf.o
+hello.bpf.o: ELF 64-bit LSB relocatable, eBPF, version 1 (SYSV), with debug_info, not stripped
+```
+说明它是一个ELF文件，包含eBPF代码，适用于具有LSB架构的64位平台，具有调试信息。
+
+进一步地可以查看具体的eBPF指令：
+```shell
+$ llvm-objdump -S hello.bpf.o
+```
+可以看到：
+```shell
+# 表示hello.bpf.o是一个带有eBPF代码的64位ELF文件
+hello.bpf.o:    file format elf64-bpf
+
+# xdp section的反汇编，C代码中通过SEC("xdp")定义了这个节
+Disassembly of section xdp:
+
+# section是一个名为hello的函数
+0000000000000000 <hello>:
+;     bpf_printk("Hello World %d", counter);
+       0:       18 06 00 00 00 00 00 00 00 00 00 00 00 00 00 00 r6 = 0 ll
+       2:       61 63 00 00 00 00 00 00 r3 = *(u32 *)(r6 + 0)
+       3:       18 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 r1 = 0 ll
+       5:       b7 02 00 00 0f 00 00 00 r2 = 15
+       6:       85 00 00 00 06 00 00 00 call 6
+;     counter++;
+       7:       61 61 00 00 00 00 00 00 r1 = *(u32 *)(r6 + 0)
+       8:       07 01 00 00 01 00 00 00 r1 += 1
+       9:       63 16 00 00 00 00 00 00 *(u32 *)(r6 + 0) = r1
+;     return XDP_PASS;
+      10:       b7 00 00 00 02 00 00 00 r0 = 2
+      11:       95 00 00 00 00 00 00 00 exit
+```
+最前面的数字表示指令的偏移量，以8字节为单位。值得注意的是，第一条指令是宽指令，占用了16字节，因此第二条指令的偏移量是2。每行的第一个字节是操作码，lovisor项目提供了很完整的[eBPF操作码文档](https://github.com/iovisor/bpf-docs/blob/master/eBPF.md)。
+
+## 将程序加载到内核中
+使用bpftool来加载和管理eBPF程序：
+```shell
+$ bpftool prog load hello.bpf.o /sys/fs/bpf/hello
+```
+它从目标文件中加载eBPF程序，然后把它固定到 `/sys/fs/bpf/hello` 上（对于eBPF程序这是可选的，可以直接把它加载到内核中，而对于bpftool来说这是必须的）。如果命令没有任何输出就表示成功，此时可以看到这个文件：
+```shell
+$ ls /sys/fs/bpf/
+hello
+```
+
+## 检查加载的程序
+使用bpftool可以列出加载到内核的所有程序：
+```shell
+$ bpftool prog list
+...
+540: xdp name hello tag d35b94b4c0c10efb gpl
+    loaded_at 2022-08-02T17:39:47+0000 uid 0
+    xlated 96B jited 148B memlock 4096B map_ids 165,166
+    btf_id 254
+```
+程序被分配了ID 540，每个程序在加载时都会有一个ID，通过ID可以查询更多信息（指定 `--pretty` 以JSON格式输出）：
+```shell
+$ bpftool prog show id 540 --pretty
+{
+    "id": 540,
+    "type": "xdp",
+    "name": "hello",
+    "tag": "d35b94b4c0c10efb",
+    "gpl_compatible": true,
+    "loaded_at": 1659461987,
+    "uid": 0,
+    "bytes_xlated": 96,
+    "jited": true,
+    "bytes_jited": 148,
+    "bytes_memlock": 4096,
+    "map_ids": [165,166
+    ],
+    "btf_id": 254
+}
+```
+以上的信息含义分别为：
+- ID是540
+- 程序可以通过XDP事件附加到网络接口上
+- 名字是hello
+- 程序有另一个标识符tag
+- 使用GPL许可证
+- 程序加载的时间
+- 加载该程序的用户的uid
+- 编译后的程序大小为96字节
+- 程序已经被JIT编译
+- JIT编译的程序大小为148字节
+- 保留了4096字节的内存，不会被分页
+- 使用了ID为165和166的Map
+- 有一个BTF信息块，只有使用 `-g` 选项编译时才会有
+
+### BPF程序标签（tag）
+每个程序会有一个SHA哈希值作为标识符，ID每次加载都会变化，而tag不会。bpftool可以通过不同的方式引用一个程序，如以下方式是同样的操作：
+- `bpftool prog show id 540`
+- `bpftool prog show tag d35b94b4c0c10efb`
+- `bpftool prog show name hello`
+- `bpftool prog show pinned /sys/fs/bpf/hello`
+
+不同程序的tag和名字可能重复，但ID和固定路径不会。
+
+### 翻译后的字节码
+`bytes_xlated` 表示eBPF程序翻译后的字节码大小，它已经通过了验证器（可能经过了内核更改）。可以查看程序的翻译版本：
+```shell
+$ bpftool prog dump xlated name hello
+int hello(struct xdp_md * ctx):
+; bpf_printk("Hello World %d", counter);
+    0: (18) r6 = map[id:165][0]+0
+    2: (61) r3 = *(u32 *)(r6 +0)
+    3: (18) r1 = map[id:166][0]+0
+    5: (b7) r2 = 15
+    6: (85) call bpf_trace_printk#-78032
+; counter++;
+    7: (61) r1 = *(u32 *)(r6 +0)
+    8: (07) r1 += 1
+    9: (63) *(u32 *)(r6 +0) = r1
+; return XDP_PASS;
+    10: (b7) r0 = 2
+    11: (95) exit
+```
+
+### JIT编译的机器代码
+为了取得更高的性能，通常对eBPF程序进行即时编译。实际上由于eBPF指令集设计和机器指令设计比较接近，运行时解释也是可行的，但会稍微慢一些。启用JIT需要在内核中启用 `CONFIG_BPF_JIT` 选项，然后可以通过 `net.core.bpf_jit_enable sysctl` 在运行中开启或关闭。
+
+同样可以查看JIT编译后的机器代码：
+```shell
+$ bpftool prog dump jited name hello
+int hello(struct xdp_md * ctx):
+bpf_prog_d35b94b4c0c10efb_hello:
+; bpf_printk("Hello World %d", counter);
+    0: hint #34
+    4: stp x29, x30, [sp, #-16]!
+    8: mov x29, sp
+    c: stp x19, x20, [sp, #-16]!
+    10: stp x21, x22, [sp, #-16]!
+    14: stp x25, x26, [sp, #-16]!
+    18: mov x25, sp
+    1c: mov x26, #0
+    20: hint #36
+    24: sub sp, sp, #0
+    28: mov x19, #-140733193388033
+    2c: movk x19, #2190, lsl #16
+    30: movk x19, #49152
+    34: mov x10, #0
+    38: ldr w2, [x19, x10]
+    3c: mov x0, #-205419695833089
+    40: movk x0, #709, lsl #16
+    44: movk x0, #5904
+    48: mov x1, #15
+    4c: mov x10, #-6992
+    50: movk x10, #29844, lsl #16
+    54: movk x10, #56832, lsl #32
+    58: blr x10
+    5c: add x7, x0, #0
+; counter++;
+    60: mov x10, #0
+    64: ldr w0, [x19, x10]
+    68: add x0, x0, #1
+    6c: mov x10, #0
+    70: str w0, [x19, x10]
+; return XDP_PASS;
+    74: mov x7, #2
+    78: mov sp, sp
+    7c: ldp x25, x26, [sp], #16
+    80: ldp x21, x22, [sp], #16
+    84: ldp x19, x20, [sp], #16
+    88: ldp x29, x30, [sp], #16
+    8c: add x0, x7, #0
+    90: ret
+```
+
+## 附加到事件
+程序的类型需要和附加的事件类型匹配，它是一个XDP程序，可以附加到网络接口上的XDP事件上：
+```shell
+$ bpftool net attach xdp id 540 dev eth0
+```
+这里使用id来标识程序，并把它附加到网络接口 `eth0` 。可以查看所有附加到网络接口上的eBPF程序：
+```shell
+$ bpftool net list
+xdp:
+eth0(2) driver id 540
+
+tc:
+
+flow_dissector:
+```
+使用 `ip link` 检查网络接口的时候也可以看到这个eBPF程序，大致如下：
+```shell
+1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT
+group default qlen 1000
+    ...
+2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 xdp qdisc fq_codel state UP
+mode DEFAULT group default qlen 1000
+    ...
+    prog/xdp id 540 tag 9d0e949f89f1a82c jited
+    ...
+```
+每次收到网络数据包，这个程序会向跟踪管道写入信息，可以用 `cat` 或 `bpftool prog tracelog` 来查看：
+```shell
+$ cat /sys/kernel/debug/tracing/trace_pipe
+<idle>-0    [003] d.s.. 655370.944105: bpf_trace_printk: Hello World 4531
+<idle>-0    [003] d.s.. 655370.944587: bpf_trace_printk: Hello World 4532
+<idle>-0    [003] d.s.. 655370.944896: bpf_trace_printk: Hello World 4533
+```
+和第2章中的输出相比，它没有触发时间的命令名和进程ID，而是在最开头有一个 `<idle>-0` ，这是因为事件由网络数据包到达触发，没有特定进程参与。
+
+## 全局变量
+该程序还持续递增一个名为 `counter` 的全局变量，这样的特性通过eBPF Map来实现。一个Map可以被eBPF程序或用户空间访问，同一个程序多次运行可以重复访问它，从而实现全局变量的功能。（在2019年前，eBPF没有提供全局变量的支持，必须显式使用Map来实现）
+
+前文中程序使用到ID为165和166的Map，Map的ID是它在内核中创建时分配的，每次都可能有所不同。使用bpftool可以查看加载到内核中的Map：
+```shell
+$ bpftool map list
+165: array name hello.bss   flags 0x400
+    key 4B value 4B max_entries 1 memlock 4096B
+    btf_id 254
+166: array name hello.rodata flags 0x80
+    key 4B value 15B max_entries 1 memlock 4096B
+    btf_id 254 frozen
+```
+可以看到两个Map分别对应的是 `hello` 的 `bss` 段和 `rodata` 段。检查 `bss` 段可以找到 `counter` 的信息：
+```shell
+$ bpftool map dump name hello.bss
+[{
+        "value": {
+            ".bss": [{
+                    "counter": 11127
+                }
+            ]
+        }
+    }
+]
+```
+也可以通过 `bpftool map show id 165` 来查看。这里的信息之所以如此清晰，是因为采用了 `-g` 选项编译并生成了BTF信息，否则看到的信息可能如下：
+```shell
+$ bpftool map dump name hello.bss
+key: 00 00 00 00 value: 19 01 00 00
+Found 1 element
+```
+字符串"Hello World %d"被放在 `rodata` 段：
+```shell
+$ bpftool map dump name hello.rodata
+[{
+        "value": {
+            ".rodata": [{
+                "hello.____fmt": "Hello World %d"
+                }
+            ]
+        }
+    }
+]
+```
+如果没指定 `-g` 选项，那么看到的是：
+```shell
+$ bpftool map dump id 166
+key: 00 00 00 00    value: 48 65 6c 6c 6f 20 57 6f  72 6c 64 20 25 64 00
+Found 1 element
+```
+
+## 分离程序
+可以解除该程序和网络接口的绑定：
+```shell
+$ bpftool net detach xdp dev eth0
+```
+如果命令执行成功就不会有任何输出，后面查看XDP程序列表时就不会有这个程序了：
+```shell
+$ bpftool net list
+xdp:
+
+tc:
+
+flow_dissector:
+```
+不过这个程序仍在内核中保持被加载的状态：
+```shell
+$ bpftool prog show name hello
+395: xdp name hello tag 9d0e949f89f1a82c gpl
+    loaded_at 2022-12-19T18:20:32+0000 uid 0
+    xlated 48B jited 108B memlock 4096B map_ids 4
+```
+
+## 卸载程序
+实际上并没有和 `bpftool prog load` 相对应的卸载操作（写书时），但可以通过移除固定文件来卸载程序：
+```shell
+$ rm /sys/fs/bpf/hello
+$ bpftool prog show name hello
+# 没有任何输出
+```
+
+## BPF到BPF调用
+考虑一个非常简单的被调函数，它附加到 `sys_enter` 原始跟踪点，并且跟踪系统调用的操作码：
+```c
+static __attribute((noinline)) int get_opcode(struct bpf_raw_tracepoint_args *ctx) {
+    return ctx->args[1];
+}
+```
+为了避免编译器内联展开它使得调用被绕过，使用 `__attribute((noinline))` 。主eBPF程序如下：
+```c
+SEC("raw_tp")
+int hello(struct bpf_raw_tracepoint_args *ctx) {
+    int opcode = get_opcode(ctx);
+    bpf_printk("Syscall: %d", opcode);
+    return 0;
+}
+```
+把它编译以后并加载到内核中：
+```shell
+$ bpftool prog load hello-func.bpf.o /sys/fs/bpf/hello
+$ bpftool prog list name hello
+893: raw_tracepoint name hello tag 3d9eb0c23d4ab186 gpl
+    loaded_at 2023-01-05T18:57:31+0000 uid 0
+    xlated 80B  jited 208B   memlock 4096B   map_ids 204
+    btf_id 302
+```
+接下来检查整个程序的字节码是怎样的：
+```shell
+$ bpftool prog dump xlated name hello
+int hello(struct bpf_raw_tracepoint_args * ctx):
+# hello程序调用get_opcode。指令码为0x85，对应于函数调用。向前跳转7个指令（pc+7）然后继续执行。
+; int opcode = get_opcode(ctx);
+    0: (85) call pc+7#bpf_prog_cbacc90865b1b9a5_get_opcode
+; bpf_printk("Syscall: %d", opcode);
+    1: (18) r1 = map[id:193][0]+0
+    3: (b7) r2 = 12
+    4: (bf) r3 = r0
+    5: (85) call bpf_trace_printk#-73584
+; return 0;
+    6: (b7) r0 = 0
+    7: (95) exit
+# get_opcode的字节码第一条指令位于偏移量8处，刚好是跳转到的位置
+int get_opcode(struct bpf_raw_tracepoint_args * ctx):
+; return ctx->args[1];
+    8: (79) r0 = *(u64 *)(r1 +8)
+; return ctx->args[1];
+    9: (95) exit
+```
+函数调用指令会把当前状态压入栈中，栈最多512字节，从而函数调用的层数不能很多。
