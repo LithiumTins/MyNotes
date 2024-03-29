@@ -752,3 +752,316 @@ int get_opcode(struct bpf_raw_tracepoint_args * ctx):
     9: (95) exit
 ```
 函数调用指令会把当前状态压入栈中，栈最多512字节，从而函数调用的层数不能很多。
+
+<br><br>
+
+# 4 - bpf()系统调用
+用户空间应用程序可以使用 `bpf()` 系统调用来加载eBPF程序到内核中，它还可以用来操作eBPF程序和Map。eBPF本身并不需要通过系统调用来访问Map，实际上它使用辅助函数。一般来说应用程序不会直接使用 `bpf()` 系统调用，而是使用一些封装库，不过底层上还是使用 `bpf()` 系统调用。它的原型如下：
+```c
+int bpf(int cmd, union bpf_attr *attr, unsigned int size);
+```
+参数 `cmd` 指定要执行的命令，包括加载eBPF程序、创建Map、把程序附加到事件、访问Map中的键值对。`attr` 用于传递命令需要的任何参数，`size` 指示 `attr` 的字节数。
+
+看一个 BCC 程序的例子，它监控系统调用 `execve()` ，每次向 perf 缓冲区发送一条信息，实际上非常类似[第 2 章的版本](#perf和环形缓冲区map)。eBPF 代码：
+```c
+// 用于保存 12 个字符的消息
+struct user_msg_t {
+   char message[12];
+};
+
+// 宏 BPF_HASH 定义一个名为 config 的 Map，键类型为 u32，值类型为 user_msg_t
+// 如果不指定键和值的类型，则 BCC 默认为 u64
+BPF_HASH(config, u32, struct user_msg_t);
+
+// 定义 perf 缓冲区，可以向缓冲区提交任意数据，因此无需指定任何数据类型
+BPF_PERF_OUTPUT(output);
+
+// 实际上，在这个示例中，程序总是提交一个 data_t 结构
+struct data_t {
+   int pid;
+   int uid;
+   char command[16];
+   char message[12];
+};
+
+// 其余部分与第二章的 hello() 几乎没有变化
+int hello(void *ctx) {
+   struct data_t data = {};
+   struct user_msg_t *p;
+   char message[12] = "Hello World";
+
+   data.pid = bpf_get_current_pid_tgid() >> 32;
+   data.uid = bpf_get_current_uid_gid() & 0xFFFFFFFF;
+
+   bpf_get_current_comm(&data.command, sizeof(data.command));
+   // 唯一的区别如果是哈希表中存在与 uid 匹配的条目，则输出值存储的消息，而不是默认的“Hello World”
+   p = config.lookup(&data.uid);
+   if (p != 0) {
+      bpf_probe_read_kernel(&data.message, sizeof(data.message), p->message);
+   } else {
+      bpf_probe_read_kernel(&data.message, sizeof(data.message), message);
+   }
+
+   output.perf_submit(ctx, &data, sizeof(data));
+
+   return 0;
+}
+```
+Python 代码也类似第 2 章中的代码，不过增加了两行提前定义了特定用户需要返回的信息：
+```python
+# 使用 Python 的 ctype 包来保证值和 C 中的 int 类型是一致的
+b["config"][ct.c_int(0)] = ct.create_string_buffer(b"Hey root!")
+b["config"][ct.c_int(501)] = ct.create_string_buffer(b"Hi user 501!")
+```
+用 `strace` 跟踪这个程序，可以找到关于 `bpf()` 的部分：
+```shell
+$ strace -e bpf ./hello-buffer-config.py
+...
+bpf(BPF_BTF_LOAD, ...) = 3
+bpf(BPF_MAP_CREATE, {map_type=BPF_MAP_TYPE_PERF_EVENT_ARRAY...) = 4
+bpf(BPF_MAP_CREATE, {map_type=BPF_MAP_TYPE_HASH...) = 5
+bpf(BPF_PROG_LOAD, {prog_type=BPF_PROG_TYPE_KPROBE,...prog_name="hello",...) = 6
+bpf(BPF_MAP_UPDATE_ELEM, ...}
+...
+```
+
+## 加载BTF数据
+首先观察第一个`bpf` 调用：
+```shell
+bpf(BPF_BTF_LOAD, {btf="\237\353\1\0...}, 128) = 3
+```
+它进行的操作是 `BPF_BTF_LOAD`，如果在老版本内核中可能看不到这条调用（BTF 是在 5.1 内核的上游引入的，但有些发行版把它移植到了更早的版本），BTF 允许 eBPF 程序在不同的内核版本间移植，例如在一台机器上编译程序并在另一台使用不同内核版本、具有不同内核数据结构的机器上使用它。这行语句把 BTF 数据块加载到内核中，然后它返回一个对应于该数据的文件描述符。
+
+## 创建Map
+首先是 `output` 的创建：
+```shell
+bpf(BPF_MAP_CREATE, {map_type=BPF_MAP_TYPE_PERF_EVENT_ARRAY, , key_size=4,
+value_size=4, max_entries=4, ... map_name="output", ...}, 128) = 4
+```
+它执行的操作为 `BPF_MAP_CREATE`，即创建一个 Map，它的类型是 `BPF_MAP_TYPE_PERF_EVENT_ARRAY`，键和值大小都是 4 字节，最大条目数是 4，它的名字是 `output` 。
+
+然后是 `config` 的创建：
+```shell
+bpf(BPF_MAP_CREATE, {map_type=BPF_MAP_TYPE_HASH, key_size=4, value_size=12,
+max_entries=10240... map_name="config", ...btf_fd=3,...}, 128) = 5
+```
+这个 Map 的类型是 `BPF_MAP_TYPE_HASH`，键大小是 4 字节，值大小是 12 字节。没有指定这个表的大小，BCC 默认最多可以有 10240 个条目，名字是 `config` 。返回的文件描述符是 5。比上一个 Map 多了一个 `btf_fd` 字段，它通知内核 BTF 数据的文件描述符，bpftool 等工具借助它可以漂亮地打印 Map 转储信息。
+
+## 加载程序
+接下来是加载程序：
+```shell
+bpf(BPF_PROG_LOAD, {prog_type=BPF_PROG_TYPE_KPROBE, insn_cnt=44,
+insns=0xffffa836abe8, license="GPL", ... prog_name="hello", ...
+expected_attach_type=BPF_CGROUP_INET_INGRESS, prog_btf_fd=3,...}, 128) = 6
+```
+第二个参数中字段比较多：
+- prog_type：程序类型，这里是 `BPF_PROG_TYPE_KPROBE`，表示它要附加到 kprobe 上
+- insn_cnt：指令计数，字节码中指令的数量
+- insns：保存指令的内存地址
+- license：许可证，这里是 `GPL`
+- prog_name：程序名字，这里是 `hello`
+- expected_attach_type：预期的附加类型，这里是 `BPF_CGROUP_INET_INGRESS`，这看起来好像跟网络设备有关，然而它应该被附加到 kprobe 上。实际上这个字段值用于部分程序类型，`BPF_PROG_TYPE_KPROBE` 正好不使用它，所以设置成 0，碰巧 `BPF_CGROUP_INET_INGRESS` 是该常量列表的第一个且拥有值 0。
+- prog_btf_fd：BTF 数据的文件描述符，这里是 3
+
+如果程序没能通过验证，返回一个负数。这里它返回文件描述符 6。
+
+## 从用户空间修改Map
+前面在 Python 代码中用两行代码修改了 `config` Map，这也是通过 `bpf()` 系统调用来完成的：
+```shell
+bpf(BPF_MAP_UPDATE_ELEM, {map_fd=5, key=0xffffa7842490, value=0xffffa7a2b410, flags=BPF_ANY}, 128) = 0
+```
+这行代码执行的操作是 `BPF_MAP_UPDATE_ELEM`，即更新 Map 中的值。`BPF_ANY` 标志表示如果 Map 中还不存在这个键，就插入这个键值对。`map_fd` 是 Map 的文件描述符，`key` 是键，`value` 是值。值得注意的是，文件描述符是进程本地的，同一个文件描述符在不同进程中可能指向不同的对象。
+
+这里键和值都是指针，无法直观看出来具体内容，这时候可以使用 `bpftool`：
+```shell
+$ bpftool map dump name config
+[{
+         "key": 0,
+         "value": {
+             "message": "Hey root!"
+         }
+     },{
+         "key": 501,
+         "value": {
+             "message": "Hi user 501!"
+         }
+     }
+]
+```
+
+## BPF程序和map引用
+当退出程序的时候，会发现 eBPF 程序和 map 都被卸载，实际上内核用打开的文件描述的引用计数来维护它们。如果把程序固定到某个文件上，会形成一个额外的引用。
+
+### 固定
+```shell
+bpftool prog load hello.bpf.o /sys/fs/bpf/hello
+```
+如果不提供固定功能，那么bpftool在加载程序以后就退出，此时引用计数为 0，操作系统卸载 eBPF 程序，这是没有任何意义的。
+
+当 eBPF 程序附加到某个事件上时，内核也会增加程序的引用计数，如加载 XDP 程序：
+```shell
+ip link set dev eth0 xdp obj hello.bpf.o sec xdp
+```
+此时已经没有用户空间应用程序引用这个程序了，此时查看内核中加载的程序：
+```shell
+$ bpftool prog list
+…
+1255: xdp name hello tag 9d0e949f89f1a82c gpl
+        loaded_at 2022-11-01T19:21:14+0000 uid 0
+        xlated 48B jited 108B memlock 4096B map_ids 612
+```
+可以看到这个程序并没有被卸载。
+
+相似的，map 也有引用计数器，如果引用计数下降为 0 也会被卸载。可以通过 `bpf(BPF_PROG_BIND_MAP)` 把 map 和程序绑定在一起，这样程序退出时 map 也不会被卸载。map 也可以固定到文件系统，用户可以通过 map的路径来访问它。
+
+### BPF 链接
+这是创建 BPF 程序引用的另一种方法。它在和它所附加的事件之间提供了一个抽象层，BPF 链接本身可以固定到文件系统，这会增加程序的引用计数。
+
+## eBPF涉及的其他系统调用
+
+### 初始化perf缓冲区
+对于 perf 缓冲区，可以看到如下的系统调用：
+```shell
+bpf(BPF_MAP_UPDATE_ELEM, {map_fd=4, key=0xffffa7842490, value=0xffffa7a2b410, flags=BPF_ANY}, 128) = 0
+```
+这和上面对于 `config` 的更新很像，不过这里的文件描述符 4 是 `output` 的文件描述符。这样的系统调用执行了 4 次，此后再也没有 `bpf()` 系统调用，则用户空间获取数据显然不是通过 `bpf()` 系统调用来完成的。为了了解背后的操作，需要让 `strace` 跟踪更多的系统调用：
+```shell
+$ strace -e bpf,perf_event_open,ioctl,ppoll ./hello-buffer-config.py
+```
+
+### 附加到Kprobe事件
+为了附加 eBPF程序到某个事件上，需要获得指定该事件的文件描述符，`execve() kprobe` 的文件描述符创建如下：
+```shell
+perf_event_open({type=0x6 /* PERF_TYPE_??? */, ...},...) = 7
+```
+根据 [perf_event_open() 系统调用的手册页](https://man7.org/linux/man-pages/man2/perf_event_open.2.html)，它“创建一个允许测量性能信息的文件描述符”。`strace` 不知道如何解读 6,实际上它描述了 Linux 如何支持性能测量单元的动态类型。在 /sys/bus/event_source/devices 下，每个 PMU 实例都有一个子目录，每个子目录下都有一个 type 文件，其内容为可用于 type 字段的整数。如：
+```shell
+$ cat /sys/bus/event_source/devices/kprobe/type
+6
+```
+因此这里的 `type=0x6` 表示 kprobe 类型的 perf 事件。
+
+该调用返回代表 kprobe 的 perf 事件文件描述符 7，接下来需要通过 `ioctl()` 系统调用来附加 eBPF 程序到这个事件上：
+```shell
+# 绑定事件
+ioctl(7, PERF_EVENT_IOC_SET_BPF, 6) = 0
+
+# 开启事件
+ioctl(7, PERF_EVENT_IOC_ENABLE, 0) = 0
+```
+然后每当 `execve()` 执行的时候，eBPF 程序就会被触发。
+
+### 设置和读取 perf 事件
+上面提到 `bpf(BPF_MAP_UPDATE_ELEM)` 执行了 4 次，实际上还有其他的系统调用参与：
+```shell
+perf_event_open({type=PERF_TYPE_SOFTWARE, size=0 /* PERF_ATTR_SIZE_??? */,
+config=PERF_COUNT_SW_BPF_OUTPUT, ...}, -1, X, -1, PERF_FLAG_FD_CLOEXEC) = Y
+ioctl(Y, PERF_EVENT_IOC_ENABLE, 0) = 0
+bpf(BPF_MAP_UPDATE_ELEM, {map_fd=4, key=0xffffa7842490, value=0xffffa7a2b410, flags=BPF_ANY}, 128) = 0
+```
+其中 `X` 在四次调用中分别是 0、1、2 和 3，这是因为作者的电脑有 4 个 CPU 核心，因此 output perf 缓冲区也有 4 个条目，实际上是每个 CPU 核心有一个条目。这也就是为什么创建 perf 缓冲区的时候指定的类型为 `BPF_MAP_TYPE_PERF_EVENT_ARRAY`，因为每个 CPU 核心都有一个 perf 缓冲区，它们一起形成的数组。
+
+每个缓冲区打开时都返回一个文件描述符，即上面的 `Y` ，这里分别是 8、9、10 和 11。然后 `ioctl()` 用于启用 perf 输出。最后 `bpf()` 系统调用把缓冲区加入数组中。
+
+用户空间代码会在 4 个描述符上调用 `ppoll()` 来检查是否有数据到达：
+```shell
+ppoll([{fd=8, events=POLLIN}, {fd=9, events=POLLIN}, {fd=10, events=POLLIN},
+{fd=11, events=POLLIN}], 4, NULL, NULL, 0) = 1 ([{fd=8, revents=POLLIN}])
+```
+这个调用会阻塞直至数据到达。
+
+## 环形缓冲区
+在内核版本 5.8 以后，使用 BPF 环形缓冲区比使用 perf 缓冲区更好，一方面是性能原因，另一方面它可以保留数据的提交顺序，即使数据来自不同的 CPU 核心。它只有一个缓冲区，所有核心共享。
+
+使用环形缓冲区的版本和 perf 缓冲区的版本非常相似，它们的区别为：
+| hello-buffer-config.py                        | hello-ring-buffer-config.py                    |
+| --------------------------------------------- | ---------------------------------------------- |
+| BPF_PERF_OUTPUT(output);                      | BPF_RINGBUF_OUTPUT(output, 1);                 |
+| output.perf_submit(ctx, &data, sizeof(data)); | output.ringbuf_output(&data, sizeof(data), 0); |
+| b["output"].open_perf_buffer(print_event)     | b["output"].open_ring_buffer(print_event)      |
+| b.perf_buffer_poll()                          | b.ring_buffer_poll()                           |
+
+创建环形缓冲区的系统调用如下：
+```shell
+bpf(BPF_MAP_CREATE, {map_type=BPF_MAP_TYPE_RINGBUF, key_size=0, value_size=0,
+max_entries=4096, ... map_name="output", ...}, 128) = 4
+```
+而等待数据到达则使用了较新的 `epoll`：
+```shell
+# 创建 epoll 文件描述符
+epoll_create1(EPOLL_CLOEXEC) = 8
+
+# 添加环形缓冲区文件描述符到 epoll
+epoll_ctl(8, EPOLL_CTL_ADD, 4, {events=EPOLLIN, data={u32=0, u64=0}}) = 0
+
+# 等待数据到达
+epoll_pwait(8, [{events=EPOLLIN, data={u32=0, u64=0}}], 1, -1, NULL, 8) = 1
+```
+
+## 从map中读取数据
+查看这个过程使用的系统调用：
+```shell
+$ strace -e bpf bpftool map dump name config
+```
+可以发现，有两个步骤：
+1. 遍历所有 map，查找名为 `config` 的 map
+1. 如果找到了，就遍历其中所有元素
+
+### 找到map
+```shell
+# BPF_MAP_GET_NEXT_ID 获取 start_id 中指定值之后的下一个 map 的 ID。
+bpf(BPF_MAP_GET_NEXT_ID, {start_id=0,...}, 12) = 0
+
+# BPF_MAP_GET_FD_BY_ID 返回指定 map ID 的文件描述符。
+bpf(BPF_MAP_GET_FD_BY_ID, {map_id=48...}, 12) = 3
+
+# BPF_OBJ_GET_INFO_BY_FD 检索文件描述符所引用对象的信息。其中包括名称，可以用于检查是否正在查找的 map
+bpf(BPF_OBJ_GET_INFO_BY_FD, {info={bpf_fd=3, ...}}, 16) = 0
+
+# 重复该序列，获取步骤 1 中 map 之后下一张 map ID。
+bpf(BPF_MAP_GET_NEXT_ID, {start_id=48, ...}, 12) = 0
+bpf(BPF_MAP_GET_FD_BY_ID, {map_id=116, ...}, 12) = 3
+bpf(BPF_OBJ_GET_INFO_BY_FD, {info={bpf_fd=3...}}, 16) = 0
+```
+如果遍历完了所有的 map，会遇到：
+```shell
+bpf(BPF_MAP_GET_NEXT_ID, {start_id=133,...}, 12) = -1 ENOENT (No such file or directory)
+```
+
+### 读取map中的元素
+通过遍历 map 获得了对应的文件描述符，接下来就是读取 map 中的元素：
+```shell
+# BPF_MAP_GET_NEXT_KEY 返回 key 的下一个 key，如果传入 NULL，则返回第一个 key。结果写入 next_key
+bpf(BPF_MAP_GET_NEXT_KEY, {map_fd=3, key=NULL, next_key=0xaaaaf7a63960}, 24) = 0
+
+# 给定一个键，返回对应的值，写入 value 的位置
+bpf(BPF_MAP_LOOKUP_ELEM, {map_fd=3, key=0xaaaaf7a63960,
+value=0xaaaaf7a63980, flags=BPF_ANY}, 32) = 0
+
+# 此时，bpftool获得了第一个键值对的内容，并将该信息写入屏幕。
+[{
+    "key": 0,
+    "value": {
+        "message": "Hey root!"
+    }
+
+# 移动到下一个键，获取它的值，并将这个键值对写到屏幕上
+bpf(BPF_MAP_GET_NEXT_KEY, {map_fd=3, key=0xaaaaf7a63960,
+next_key=0xaaaaf7a63960}, 24) = 0
+bpf(BPF_MAP_LOOKUP_ELEM, {map_fd=3, key=0xaaaaf7a63960,
+value=0xaaaaf7a63980, flags=BPF_ANY}, 32) = 0
+    },{
+        "key": 501,
+        "value": {
+            "message": "Hi user 501!"
+        }
+
+# 下一次调用 BPF_MAP_GET_NEXT_KEY 返回 ENOENT，表示 map 中没有更多的条目
+bpf(BPF_MAP_GET_NEXT_KEY, {map_fd=3, key=0xaaaaf7a63960,
+next_key=0xaaaaf7a63960}, 24) = -1 ENOENT (No such file or directory)
+
+# 此处，bpftool 完成写入屏幕的输出并退出。
+    }
+]
++++ exited with 0 +++
+```
