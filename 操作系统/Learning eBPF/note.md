@@ -1065,3 +1065,515 @@ next_key=0xaaaaf7a63960}, 24) = -1 ENOENT (No such file or directory)
 ]
 +++ exited with 0 +++
 ```
+
+<br><br>
+
+# 5 - CO-RE、BTF 和 Libbpf
+BTF 是 BPF Type Format 的缩写，即 BPF 类型格式。它可以让 BPF 一次编译、到处运行（CO-RE），解决了 eBPF 程序在不同内核版本间的可移植问题。
+
+许多 eBPF 程序需要访问内核中的数据结构，然而随着内核的迭代其中的数据结构也会发生变化，从而带来了兼容性问题。CO-RE 允许 eBPF 程序包含编译时的数据结构信息，同时提供机制在必要时调整字段的访问方式，从而保证只要程序不访问目标机器内核中不存在的字段或数据结构，就可以在不同内核版本之间移植。
+
+## BCC 的可移植性方法
+BCC 解决跨内核移植问题的办法是，运行时在目标计算机重新编译 eBPF 程序。这样有许多问题：
+- 需要在目标机器上安装编译工具链和头文件
+- 每次可能需要几秒钟来编译程序
+- 如果大量的机器都是相同的，重复编译是浪费的
+- 嵌入式设备可能没有足够的资源来编译程序
+
+因为这样，BCC 并不是开发现代 eBPF 程序的最佳工具。（在 BCC 的 libbpf-tools 目录中有用 C 语言编写的更新版本的工具，它们使用了 libbpf 和 CO-RE，从而避免了这些问题）
+
+## CO-RE 概述
+CO-RE 的组成要素如下:
+- BTF：表达数据结构和函数签名布局的格式，被用来检查编译时和运行时数据结构的差异，也被 bpftool 等工具用来按可读方式打印数据，从内核 5.4 开始被支持
+- 内核头：内核源代码中描述数据结构的头文件，在不同版本的内核中可能有所不同。eBPF 程序员可以直接包含内核的头文件，或使用 bpftool 从当前内核中生成的 vmlinux.h 头文件，它包含了 BPF 程序可能用到的所有数据结构
+- 编译器支持：Clang 编译器在使用 `-g` 编译选项的时候会包含 CO-RE 信息，GCC 也在版本 12 加入了对 CO-RE 的支持
+- 支持数据结构体重定位的库：运行时，由于字段的偏移量可能会发生变化，需要调整字节码进行补偿。有几个库可以做到这一点：libbpf 是该功能的原始 C 库，Cilium 为 Go 提供了一个库，Aya 为 Rust 提供了一个库
+- BPF 框架：这是可选的。可以从编译的 BPF 对象文件自动生成一个框架，提供一些便捷函数供用户空间程序使用，用于管理 BPF 程序的生命周期（加载、附加到事件、卸载等），相较于直接使用 libbpf 这样的底层库更方便
+
+## BPF 类型格式
+BTF 信息描述数据结构和代码在内存中的布局方式。
+
+### BTF 用例
+BTF 具有许多用途：
+- 在程序加载到内核的时候，根据数据结构的不同进行适当的调整
+- 用于调试时按可读方式打印数据
+- 包含行和函数信息，让 bpftool 在编译后的程序转储的输出中交错显示源代码
+- BPF 自旋锁也用到了 BTF 信息，自旋锁用于阻止两个 CPU 核心访问相同的 map 值。eBPF 程序使用辅助函数 `bpf_spin_lock()` 和 `bpf_spin_unlock()` 来操作自旋锁，只有当 BTF 信息中包含了自旋锁在结构体中的位置时，这两个函数才能正确工作。自旋锁在内核 5.1 版本被支持，只能用于哈希或数组 map 类型。
+
+### 使用 bpftool 列出 BTF 信息
+在运行上一章中的 hello-buffer-config 时测试，以下命令列出加载到内核的所有 BTF 信息：
+```shell
+$ bpftool btf list
+1: name [vmlinux] size 5843164B
+2: name [aes_ce_cipher] size 407B
+3: name [cryptd] size 3372B
+...
+149: name <anon> size 4372B prog_ids 319 map_ids 103
+        pids hello-buffer-co(7660)
+155: name <anon> size 37100B
+        pids bpftool(7784)
+```
+第一个条目是 vmlinux，保存当前内核相关的 BTF 信息。
+
+注意到条目 149，它包含的信息为：
+- 这个 BTF 信息的 ID 是 149
+- 这是一个大约 4KB 的匿名信息块
+- 它被 ID 319 的 BPF 程序和 ID 103 的 map 使用
+- 它被 ID 7660 的 hello-buffer-config 程序使用（名字被截断为 15 个字符）
+
+### BTF 类型
+得到 BTF 信息的 ID 以后，可以通过 bpftool 来检查其中的内容。作者检查 ID 149 中的信息时得到了 69 行输出，每行都是一个类型定义。这里查看前几行作为示例，它们与 config map 的定义相关，首先回看源代码中的定义：
+```c
+struct user_msg_t {
+    char message[12];
+};
+BPF_HASH(config, u32, struct user_msg_t);
+```
+然后看看 BTF 信息中对应的信息的前三行：
+```shell
+$ bpftool btf dump id 149
+[1] TYPEDEF 'u32' type_id=2
+[2] TYPEDEF '__u32' type_id=3
+[3] INT 'unsigned int' size=4 bits_offset=0 nr_bits=32 encoding=(none)
+...
+```
+每行开头的数字是类型 ID，因此这里包含了三种类型的信息：
+- 类型 1：名为 `u32` 的别名，具体的类型由类型 2 定义
+- 类型 2：名为 `__u32` 的别名，具体的类型由类型 3 定义
+- 类型 3：名为 `unsigned int` 的整型，即 4 字节的无符号整数
+
+因此 `u32` 实际上就是 `unsigned int` 的别名。
+
+然后再看接下来几行：
+```shell
+[4] STRUCT 'user_msg_t' size=12 vlen=1
+        'message' type_id=6 bits_offset=0
+[5] INT 'char' size=1 bits_offset=0 nr_bits=8 encoding=(none)
+[6] ARRAY '(anon)' type_id=5 index_type_id=7 nr_elems=12
+[7] INT '__ARRAY_SIZE_TYPE__' size=4 bits_offset=0 nr_bits=32 encoding=(none)
+```
+这些就与 `user_msg_t` 结构体相关：
+- 类型 4：名为 `user_msg_t` 的结构体，大小为 12 字节，总共有一个字段。然后依次列出其中的字段，这里只有一个 `message` 字段，类型为类型 6。
+- 类型 5：名为 `char` 的整型，即 C 语言中的 `char` 类型
+- 类型 6：匿名的数组类型，包含的元素类型是类型 5，有 12 个元素
+- 类型 7：一个 4 字节的整型，用于表示数组的大小
+
+目前所有条目的 bits_offset 都是 0，在具有多个字段的结构体中，这个值会有所不同：
+```shell
+[8] STRUCT '____btf_map_config' size=16 vlen=2
+        'key' type_id=1 bits_offset=0
+        'value' type_id=4 bits_offset=32
+```
+这是由 BCC 自动生成的，名为 config 的 map 的键值对类型，可以看到 `value` 是从 32 位开始的。
+
+之所以需要有 bits_offset，是因为可能编译器会对字段进行对齐处理，这样的处理在不同的编译器和架构上可能会有所不同。
+
+### 带有 BTF 信息的 map
+看看创建一个 map 的时候如何把 BTF 信息传递给内核，上一章提到 map 的创建是通过系统调用 `bpf(BPF_MAP_CREATE)` 来完成的，这需要传递一个 `bpf_attr` 结构体作为参数，内核中它的定义如下（省略一些细节）：
+```c
+struct { /* anonymous struct used by BPF_MAP_CREATE command */
+    __u32    map_type;    /* one of enum bpf_map_type */
+    __u32    key_size;    /* size of key in bytes */
+    __u32    value_size;    /* size of value in bytes */
+    __u32    max_entries;    /* max number of entries in a map */
+    ...
+    char    map_name[BPF_OBJ_NAME_LEN];
+    ...
+    __u32    btf_fd;        /* fd pointing to a BTF type data */
+    __u32    btf_key_type_id;    /* BTF type_id of the key */
+    __u32    btf_value_type_id;    /* BTF type_id of the value */
+    ...
+};
+```
+在引入 BTF 之前，这个结构体中没有 btf 相关字段，内核知道 key 和 value 的大小，但不知道它们的具体类型。这里把 key 和 value 的类型都单独传递给了内核，因此上面看到的 btf_map_config 结构体并未被内核使用，它只是提供给用户空间程序使用的。
+
+### 函数和函数原型的 BTF 数据
+以下是 `hello()` 的相关信息：
+```shell
+[31] FUNC_PROTO '(anon)' ret_type_id=23 vlen=1
+        'ctx' type_id=10
+[32] FUNC 'hello' type_id=31 linkage=static
+```
+这里有两个类型：
+- 类型 32：名为 `hello` 的函数，它的类型是类型 31
+- 类型 31：一个函数原型，它有 1 个参数。参数 `ctx`，类型是类型 10；返回类型是类型 23
+
+用到的两个类型是：
+```shell
+[10] PTR '(anon)' type_id=0
+...
+[23] INT 'int' size=4 bits_offset=0 nr_bits=32 encoding=SIGNED
+```
+其中类型 10 是一个匿名指针，默认类型为 0（没有被列出，实际上是 `void *`）。类型 23 是一个 4 字节整数，encoding=SIGNED 表示它是有符号整数。
+
+### 检查 map 和程序的 BTF 数据
+查看 config map 的 BTF 数据：
+```shell
+bpftool btf dump map name config
+[1] TYPEDEF 'u32' type_id=2
+[4] STRUCT 'user_msg_t' size=12 vlen=1
+    'message' type_id=6 bits_offset=0
+```
+类似的，可以使用 `bpftool btf dump prog <program_name>` 来查看某个程序相关的 BTF 数据。
+
+## 生成内核头文件
+查看内核中的所有 BTF 数据块时，会发现有许多预先存在的块，如：
+```shell
+$ bpftool btf list
+1: name [vmlinux] size 5842973B
+2: name [aes_ce_cipher] size 407B
+3: name [cryptd] size 3372B
+...
+```
+第一项是 vmlinux，它包含了当前内核的所有数据类型、数据结构和函数定义的 BTF 信息，这要求内核使用 CONFIG_DEBUG_INFO_BTF 选项编译。
+
+eBPF 程序需要了解它需要使用的内核数据结构和类型的定义，在 CO-RE 之前，开发人员甚至需要知道它们在哪个具体的头文件中。不过现在支持 BTF 的工具可以从内核包含的 BTF 信息中生成一个合适的头文件。
+
+这个头文件一般是 vmlinux.h，可以通过以下命令生成：
+```shell
+$ bpftool btf dump file /sys/kernel/btf/vmlinux format c > vmlinux.h
+```
+该文件定义了所有内核数据类型，因此 eBPF 程序只需要包含这个头文件就可以了。当把程序编译为目标文件后，其中将会包含与头文件中定义相匹配的 BTF 信息。
+
+自内核 5.4 版本以来，/sys/kernel/btf/vmlinux 文件包含了 BTF 信息。如果希望在更早的机器上使用相关特性，需要自行为 libbpf 准备原始 BTF 数据。
+
+## CO-RE eBPF 程序
+假设使用 C 语言编写 eBPF 程序并使用 Clang 编译器和 libbpf 库实现。实现一个非常类似于上一章中的 `hello-buffer-config.py` 的程序，不过这里用 C 语言实现，从而可以使用 libbpf 和 CO-RE。
+
+首先来实现程序的 eBPF 部分 hello-buffer-config.bpf.c，然后再实现用户空间部分 hello-buffer-config.c。
+
+### 头文件
+eBPF 程序需要包含一些头文件：
+```c
+#include "vmlinux.h"
+#include <bpf/bpf_helpers.h>
+#include <bpf/bpf_tracing.h>
+#include <bpf/bpf_core_read.h>
+#include "hello-buffer-config.h"
+```
+这基本是 libbpf 程序的典型模式。
+
+#### 内核头信息
+引用任何内核数据结构或类型的程序，最简单的选择就是包含 vmlinux.h 头文件。更复杂些的是引用内核中单独的头文件，或者干脆自行定义类型。如果需要用到 libbpf 提供的辅助函数，就需要包含 vmliunx.h 或者 linux/types.h 来获取 BPF辅助函数所使用的 u32 和 u64 等类型。
+
+vmlinux.h 是从内核头文件提取出来的，但它并不包含 #define 定义的常量值。比如网络程序可能定义了一组常量来表示协议类型，而 vmlinux.h 就不包含它们，则可能需要在自己的代码中处理。
+
+#### 来自 libbpf 的头文件
+如果需要使用 BPF 辅助函数，就要包含 libbpf 中相关的头文件。
+
+实际上经常会把 libbpf 作为一个子模块，然后从源代码构建/安装它，这需要在 libbpf/src 目录下运行 `make install` 。
+
+#### 用于应用程序的头文件
+用于在 eBPF 程序和用户空间程序之间共享数据结构的头文件。这里定义了传输的数据的结构：
+```c
+struct data_t {
+   int pid;
+   int uid;
+   char command[16];
+   char message[12];
+   char path[16];
+};
+```
+
+### 定义 map
+包含头文件以后，接下来的几行定义了 map 的结构体：
+```c
+struct {
+    __uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
+    __uint(key_size, sizeof(u32));
+    __uint(value_size, sizeof(u32));
+} output SEC(".maps");
+
+struct user_msg_t {
+   char message[12];
+};
+
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 10240);
+    __type(key, u32);
+    __type(value, struct user_msg_t);
+} my_config SEC(".maps");
+```
+在 BCC 中，这只有一行：
+```c
+BPF_HASH(config, u32, struct user_msg_t);
+```
+然而不使用 BCC 时这个宏并不可用，所以需要自行手写。其中用到了几个宏，它们定义在 bpf/bpf_helpers_def.h 中：
+```c
+#define __uint(name, val) int (*name)[val]
+#define __type(name, val) typeof(val) *name
+#define __array(name, val) typeof(val) *name[]
+```
+
+### eBPF 程序节
+libbpf 要求每个 eBPF 程序都使用 `SEC()` 宏来定义程序类型，如：
+```c
+SEC("kprobe")
+```
+这会在 ELF 目标文件中产生一个 kprobe 节，从而 libbpf 知道把该程序加载为 BPF_PROG_TYPE_KPROBE 类型。实际上还可以把类型定义地更细致：
+```c
+SEC("kprobe/__arm64_sys_execve")
+```
+这样 libbpf 就知道把这个程序附加到哪个事件上，从而不需要在用户空间程序中手工附加。不过开发人员需要知道当前架构上的系统调用名称（可以通过 /proc/kallsyms 查看，它列出了所有的内核符号）。而 libbpf 提供了一个 ksyscall 节来简化开发，它让加载程序自动附加到特定架构版本的 kprobe 上：
+```c
+SEC("ksyscall/execve")
+```
+
+然后是程序本身：
+```c
+SEC("ksyscall/execve")
+// libbpf 中的 BPF_KPROBE_SYSCALL 宏，可以通过名称方便地访问传给系统调用的参数。对于 execve()，第一个参数是要执行的程序的路径名，这里被命名为 pathname。
+int BPF_KPROBE_SYSCALL(hello, const char *pathname)
+{
+   struct data_t data = {};
+   struct user_msg_t *p;
+
+   data.pid = bpf_get_current_pid_tgid() >> 32;
+   data.uid = bpf_get_current_uid_gid() & 0xFFFFFFFF;
+
+   bpf_get_current_comm(&data.command, sizeof(data.command));
+   // 复制内存需要使用 BPF 辅助函数
+   bpf_probe_read_user_str(&data.path, sizeof(data.path), pathname);
+
+   // bpf_map_lookup_elem() 是 BPF 辅助函数，在 map 中查找键对应的值
+   // BCC 中使用 p = my_config.lookup(&data.uid)，在编译前也会重写成 bpf_map_lookup_elem() 调用
+   p = bpf_map_lookup_elem(&my_config, &data.uid);
+   if (p != 0) {
+      bpf_probe_read_kernel_str(&data.message, sizeof(data.message), p->message);
+   } else {
+      bpf_probe_read_kernel_str(&data.message, sizeof(data.message), message);
+   }
+
+   // BCC 中为 output.perf_submit(ctx, &data, sizeof(data))
+   bpf_perf_event_output(ctx, &output, BPF_F_CURRENT_CPU, &data, sizeof(data));
+
+   return 0;
+}
+```
+由于 BCC 不支持全局变量， `message` 需要定义在 `hello()` 中成为局部变量。而使用 libbpf 时就可以把它定义成全局变量。
+
+另外注意到 `ctx` 并没有显式的定义，实际上它的定义隐藏在 bpf/bpf_tracing.h 内的 BPF_KPROBE_SYSCALL 宏定义中。
+
+### 使用 CO-RE 进行内存访问
+用于跟踪的 eBPF 程序通过 `bpf_probe_read*()` 系列的 BPF 辅助函数有限制地对内存进行访问（处理网络包的 eBPF 函数无法使用这些函数，因此只能访问网络数据包内存）。
+
+libbpf 库围绕这一些列的辅助函数提供了 CO-RE 封装器，从而利用 BTF 信息使得内存访问操作可以跨内核版本移植。如 bpf_core_read.h 头文件中的一个封装器示例：
+```c
+#define bpf_core_read(dst, sz, src)                        \
+    bpf_probe_read_kernel(dst, sz, (const void *)__builtin_preserve_access_index(src))
+```
+它使用 `__builtin_preserve_access_index()` 封装了 `src` 字段，这告诉 Clang 创建 CO-RE 重定位项以及访问内存中该地址的 eBPF 指令。这实际上是一种 C 扩展。CO-RE 重定位项告诉 libbpf 把 eBPF 程序加载到内核时根据 BTF 信息的差别重写地址。
+
+libbpf 库提供了一个 `BPF_CORE_READ()` 宏，这样就可以在一行中写多个 `bpf_core_read()` 调用。比如，如果想要得到 `d = a->b->c->d` 的效果，常规的写法是：
+```c
+struct b_t *b;
+struct c_t *c;
+
+bpf_core_read(&b, 8, &a->b);
+bpf_core_read(&c, 8, &b->c);
+bpf_core_read(&d, 8, &c->d);
+```
+而更简洁的写法是：
+```c
+d = BPF_CORE_READ(a, b, c, d);
+```
+
+### 许可证定义
+```c
+char LICENSE[] SEC("license") = "Dual BSD/GPL";
+```
+
+## 编译 eBPF 程序为 CO-RE
+在第 3 章中提到了把 C 代码编译为 eBPF 字节码的 [Makefile](#编译ebpf目标文件)，接下来分析一下使用的编译选项。
+
+### 调试信息
+为了让 eBPF 程序包含 BTF 信息，必须向 Clang 传递 `-g` 选项。默认情况下，`-g` 会把 DWARF 调试信息也加入到目标文件中，但这不被 eBPF 程序所需要，从而可以把它删除来缩小程序体积：
+```shell
+$ llvm-strip -g <file>
+```
+
+### 优化
+Clang 需要 `-O2` 或更高的优化级别来生成将通过验证器的 eBPF 字节码。如果优化等级不够高，可能会导致验证器失败。比如，默认情况下，Clang 使用 `callx <register>` 来调用辅助函数，但 eBPF 并不支持把调用地址放在寄存器中。
+
+### 目标架构
+如果使用 libbpf 定义的某些宏，需要在编译时指令目标架构。比如 bpf/bpf_helpers.h 定义了几个特定于平台的宏，包括 BPF_KPROBE 和 BPF_KPROBE_SYSCALL。
+
+kprobe 的参数是一个 pt_regs 结构体，保存 CPU 寄存器内容的副本。由于寄存器是特定于架构的，则 pt_regs 结构体也是特定于架构的，因此生成代码时需要知道目标架构。一般通过 `-D __TARGET_ARCH_<arch>` 来指定。
+
+倘若不使用这样的宏，就必须编写特定于架构的代码来访问 kprobe 的寄存器信息。从而需要为每个架构编写不同的代码。
+
+### Makefile
+```makefile
+hello-buffer-config.bpf.o: %.o: %.c
+    clang \
+        -target bpf \
+        -D __TARGET_ARCH_$(ARCH) \
+        -I/usr/include/$(shell uname -m)-linux-gnu \
+        -Wall \
+        -O2 -g \
+        -c $< -o $@
+    llvm-strip -g $@
+```
+
+### 目标文件中的 BTF 信息
+[BTF 的内核文档](https://www.kernel.org/doc/html/latest/bpf/btf.html#elf-file-format-interface)描述了 BTF 数据如何在 ELF 目标文件中编码为 .BTF 和 .BTF.ext 两部分，前者包含数据和字符串信息，后者包含函数和行信息。可以查看目标文件是否包含 BTF 信息：
+```shell
+$ readelf -S hello-buffer-config.bpf.o | grep BTF
+ [10] .BTF 				PROGBITS 		0000000000000000 	000002c0
+ [11] .rel.BTF 			REL 			0000000000000000 	00000e50
+ [12] .BTF.ext 			PROGBITS 		0000000000000000 	00000b18
+ [13] .rel.BTF.ext 		REL 			0000000000000000 	00000ea0
+```
+进一步检查 BTF 信息：
+```shell
+$ bpftool btf dump file hello-buffer-config.bpf.o
+```
+
+## BTF 重定位
+libbpf 借助 Clang 在编译过程中生成的 BPF CO-RE 重定位信息来调整 eBPF 程序的内存访问。其中关键的是 linux/bpf.h 中的一个结构体：
+```c
+struct bpf_core_relo {
+    __u32 insn_off;
+    __u32 type_id;
+    __u32 access_str_off;
+    enum bpf_core_relo_kind kind;
+};
+```
+每个需要重定位的指令都有一个此结构体。考虑某条指令把寄存器设置为某个结构体中字段的值，它会有一个 `bpf_core_relo` 结构体，`insn_off` 标识这个结构体，`type_id` 指示访问的结构体的 BTF 类型 ID，`access_str_off` 表示字段是如何被访问的。
+
+重定位数据是 Clang 自动生成并编码在 ELF 文件中的，在 vmlinux.h 中有一行令 Clang 执行这样的操作：
+```c
+#pragma clang attribute push (__attribute__((preserve_access_index)), apply_to = record)
+```
+其中 `preserve_access_index` 属性告诉 Clang 为类型定义生成 CO-RE 重定位项。`clang attribute push` 表示该属性应该应用于所有的定义，直到遇到 `clang attribute pop` 为止。
+
+加载 BPF 程序时，可以同时查看发生的重定位，通过 `-d` 选项来指示：
+```shell
+$ bpftool -d prog load hello.bpf.o /sys/fs/bpf/hello
+```
+它会打印大量的输出，跟重定位相关的输出如下所示：
+```shell
+libbpf: CO-RE relocating [24] struct user_pt_regs: found target candidate [205] struct user_pt_regs in [vmlinux]
+libbpf: prog 'hello': relo #0: <byte_off> [24] struct user_pt_regs.regs[0] (0:0:0 @ offset 0)
+libbpf: prog 'hello': relo #0: matching candidate #0 <byte_off> [205] struct user_pt_regs.regs[0] (0:0:0 @ offset 0)
+libbpf: prog 'hello': relo #0: patched insn #1 (LDX/ST/STX) off 0 -> 0
+```
+hello 程序 ID 24 的 BTF 信息引用了 user_pt_regs 结构体，它在 vmlinux BTF 数据集中的 ID 是 205。由于作者在同一台机器上编译和加载程序，所以距离结构开头的偏移量 0 保持不变。
+
+## CO-RE 用户空间代码
+有不同语言的框架来支持把 eBPF 程序加载到内核的同时完成 CO-RE 重定位。这里使用 C 语言的 libbpf 库，其他语言的版本在后面的章节中介绍。
+
+## 用户空间的 Libbpf 库
+libbpf 库有用户空间部分，它封装了 `bpf()` 系统调用和其他相关的函数，如果不需要考虑移植性可以直接使用而不使用 CO-RE。使用这个库的常规而简单的方式是使用自动生成的 BPF 框架代码。
+
+### BPF 框架
+从现有的 ELF 格式 eBPF 对象中可以自动生成框架代码：
+```shell
+bpftool gen skeleton hello-buffer-config.bpf.o > hello-buffer-config.skel.h
+```
+这个框架头文件中包含 eBPF 程序和 map 的结构定义，还有几个名字以 `hello_buffer_config_bpf__` 开头的函数（通过目标文件的名称生成），这些函数管理 eBPF 程序和 map 的生命周期。虽然可以不使用框架，但是通常使用框架会节约时间和精力。
+
+在框架文件的末尾有一个 `hello_buffer_config_bpf__elf_bytes()` 函数，返回 ELF 目标文件的字节内容，从而生成了框架以后就不再需要目标文件了。（实际上也可以通过 `bpf_object__open_file()` 从 ELF 文件加载 eBPF 程序和 map，而不是用框架中的内容）
+
+使用框架的代码如下：
+```c
+... [other #includes]
+// 引用框架头文件，以及为用户空间和内核代码共享数据结构手动编写的头文件
+#include "hello-buffer-config.h"
+#include "hello-buffer-config.skel.h"
+... [some callback functions]
+int main()
+{
+    struct hello_buffer_config_bpf *skel;
+    struct perf_buffer *pb = NULL;
+    int err;
+
+    // 设置一个回调函数，该函数将打印 libbpf 生成的任何日志消息。
+    libbpf_set_print(libbpf_print_fn);
+
+    // 创建一个 skel 结构体，表示 ELF 字节码中定义的所有 map 和程序，并将它们加载到内核中
+    skel = hello_buffer_config_bpf__open_and_load();
+...
+    // 程序自动附加到相应的事件
+    err = hello_buffer_config_bpf__attach(skel);
+...
+    // 创建一个结构体，用于处理 perf buffer 的输出
+    pb = perf_buffer__new(bpf_map__fd(skel->maps.output), 8, handle_event, lost_event, NULL, NULL);
+
+...
+    // 持续轮询 perf 缓冲区
+    while (true) {
+    	err = perf_buffer__poll(pb, 100);
+... }
+
+    // 清理代码
+    perf_buffer__free(pb);
+    hello_buffer_config_bpf__destroy(skel);
+    return -err;
+}
+```
+
+#### 将程序和 map 加载到内核
+对自动生成函数的第一次调用为：
+```c
+skel = hello_buffer_config_bpf__open_and_load();
+```
+它读取 ELF 数据并转换为 eBPF 程序和 map 结构体，然后加载到内核中，必要时进行 CO-RE 修复。
+
+这两个过程可以分离开，框架提供了单独的 `hello_buffer_config_bpf__open()` 和 `hello_buffer_config_bpf__load()` 函数。因此可以在加载之前对程序进行操作，如：
+```c
+skel = hello_buffer_config_bpf__open();
+if (!skel) {
+    // Error ...
+}
+skel->data->c = 10;
+err = hello_buffer_config_bpf__load(skel);
+```
+`skel` 保存的只是 ELF 数据的一个副本，当它被加载到内核中以后，对它再进行修改并不会影响内核中的程序。
+
+#### 访问存在的 map
+libbpf 会自动创建 ELF 数据中定义的所有 map，如果有时候会想要访问已经存在的 map，此时可以通过 `bpf_map__set_autocreate()` 来改变 libbpf 的行为。
+
+如果想要访问现有的 map，可以通过 map 固定的路径来访问，如：
+```c
+struct bpf_map_info info = {};
+unsigned int len = sizeof(info);
+
+int findme = bpf_obj_get("/sys/fs/bpf/findme");
+if (findme <= 0) {
+    printf("No FD\n");
+} else {
+    bpf_obj_get_info_by_fd(findme, &info, &len);
+    printf("Name: %s\n", info.name);
+}
+```
+
+#### 附加到事件
+```c
+err = hello_buffer_config_bpf__attach(skel);
+```
+libbpf 自动从 `SEC()` 定义中获取附加点。如果只定义了类型而没有定义具体的附加点，则需要调用类似于 `bpf_program__attach_kprobe()` 和 `bpf_program__attach_xdp()` 这一系列的函数。
+
+#### 管理事件缓冲区
+这里使用的是 libbpf 原生的函数，而不是框架生成的函数：
+```c
+pb = perf_buffer__new(bpf_map__fd(skel->maps.output), 8, handle_event, lost_event, NULL, NULL);
+```
+传入的第一个参数是 output 的文件描述符。`handle_event` 是新数据到达时的回调函数，如果 perf 缓冲区没有空间写入新数据，`lost_event` 就会被调用。
+
+程序需要轮询 perf 缓冲区：
+```c
+while (true) {
+    err = perf_buffer__poll(pb, 100);
+    ...
+}
+```
+100 是超时时间，单位是毫秒。
+
+最后清理资源，释放 perf 缓冲区，销毁内核中的程序和 map：
+```c
+perf_buffer__free(pb);
+hello_buffer_config_bpf__destroy(skel);
+```
+libbpf 有一整套 `perf_buffer__*()` 函数和 `ring_buffer__*()` 函数用来管理事件缓冲区。
