@@ -1577,3 +1577,257 @@ perf_buffer__free(pb);
 hello_buffer_config_bpf__destroy(skel);
 ```
 libbpf 有一整套 `perf_buffer__*()` 函数和 `ring_buffer__*()` 函数用来管理事件缓冲区。
+
+<br><br>
+
+# 6 - eBPF 验证器
+当 eBPF 程序加载到内核中时，验证器负责确保程序是安全的。它根据字节码，检查程序每一条可能的执行路径，同时对字节码进行一些更新为执行做准备。
+
+## 验证过程
+验证器按顺序逐步检查指令，但实际上它不执行它们。过程中，它用 bpf_reg_state 结构体来跟踪每个 eBPF 寄存器的状态，其中有一个名为 bpf_reg_type 字段用于描述寄存器中值的类型：
+- NOT_INIT：寄存器还没有被初始化
+- SCALAR_VALUE：该值不是一个指针
+- PTR_TO_* 类型，表示值是指针：
+    - PTR_TO_CTX：指向作为参数传递给 BPF 程序的上下文
+    - PTR_TO_PACKET：指向网络数据包
+    - PTR_TO_MAP_KEY：指向 map 的键
+    - PTR_TO_MAP_VALUE：指向 map 的值
+
+还有其他的几种 PTR_TO_* 类型，可以在 linux/bpf.h 中找到。
+
+该结构体还维护寄存器可能持有值的范围，如果超出了范围表示程序有错误。
+
+每当验证器遇到一个分支，它采用类似于 DFS 的方式，选择一条路径尝试并把当前寄存器状态压入栈中便于后续回溯。它一直持续检查直到到达程序结尾的返回指令，或者超出了最大的指令数（目前是一百万条，以前相当长的时间里只有 4096 条。不过现在对于非特权用户也只有 4096 条）。然后它回溯到栈中的上一个状态，尝试另一条路径。如果发现了一个错误，验证过程就结束。
+
+由于这样的验证方式开销可能非常大，它采用了名为 “状态剪枝” 的优化方法。即验证过程中，验证器在某些位置记录寄存器状态，如果后面的验证过程中再次遇到相同的状态，说明两条路径实际上等效，因此可以跳过后面的验证。曾经验证器会在每个跳转指令的前后记录状态，但研究表明平均每 4 条指令就需要存储一次状态，事实上每 10 条指令存储一次的策略会更好。
+
+## 验证器日志
+如果验证失败，验证器生成一条日志表示失败的原因。当通过 `bpftool prog load` 加载程序时，错误信息会被输出到 stderr。如果用 libbpf 编写程序，可以使用函数 `libbpf_set_print()` 设置一个处理程序来显示错误信息。
+
+验证器日志会包含验证器所做工作的摘要：
+```shell
+processed 61 insns (limit 1000000) max_states_per_insn 0 total_states 4 peak_states 4 mark_read 3
+```
+可以看出，验证器处理了 61 条指令，当一行指令通过不同路径到达时，它会被计算多次。存储的状态数量总数是 4，跟峰值数量相同，如果有状态被剪枝，峰值数量可能会小于总数。
+
+日志输出还包含验证器分析过的 BPF 指令、对应的 C 语言代码行（使用了 `-g` 选项编译从而包含了调试信息）、验证器状态信息摘要。如：
+```shell
+0: (bf) r6 = r1
+# 源代码行，需要在编译步骤中使用 -g 标志来建立调试信息
+; data.counter = c;
+1: (18) r1 = 0xffff800008178000
+3: (61) r2 = *(u32 *)(r1 +0)
+ # 寄存器状态信息。寄存器 1 包含映射值，寄存器 6 保存上下文，寄存器 10 是栈指针
+ R1_w=map_value(id=0,off=0,ks=4,vs=16,imm=0) R6_w=ctx(id=0,off=0,imm=0) R10=fp0
+; c++;
+4: (bf) r3 = r2
+5: (07) r3 += 1
+6: (63) *(u32 *)(r1 +0) = r3
+ # 寄存器状态信息。除了寄存器中保存的值的类型，还有寄存器 2 和寄存器 3 的可能值的范围
+ R1_w=map_value(id=0,off=0,ks=4,vs=16,imm=0) R2_w=inv(id=1,umax_value=4294967295,
+ var_off=(0x0; 0xffffffff)) R3_w=inv(id=0,umin_value=1,umax_value=4294967296,
+ var_off=(0x0; 0x1ffffffff)) R6_w=ctx(id=0,off=0,imm=0) R10=fp0
+```
+通常调用 eBPF 程序时上下文会被放在寄存器 1 中传入，而这里把它保存到了寄存器 6 中，这是因为调用辅助函数的时候寄存器 1 到寄存器 5 会被使用，同时它保证不会修改寄存器 6 到寄存器 9，因此通过寄存器 6 来保存上下文。此外，寄存器 0 用于辅助函数的返回值，寄存器 10 用于保存栈指针（程序无法修改）。
+
+观察一下寄存器 2 和 3：
+```shell
+R2_w=inv(id=1,umax_value=4294967295,var_off=(0x0; 0xffffffff))
+R3_w=inv(id=0,umin_value=1,umax_value=4294967296,var_off=(0x0; 0x1ffffffff))
+```
+首先它们都是 8 字节的寄存器。寄存器 2 没有最小值，最大值是 4294967295，从而这个可以保存 unsigned int 范围的所有值。在指令 4 和 5 中，寄存器 3 被赋值为寄存器 2 的值加 1，因此它的最小值是 1，最大值是 4294967295 + 1 = 4294967296。
+
+## 可视化控制流
+验证器会探索 eBPF 中所有可能路径，在调试时查看这些路径可能会有帮助，bpftool 可以生成 DOT 格式的程序控制流图，然后可以把它转换成图像：
+```shell
+$ bpftool prog dump xlated name kprobe_exec visual > out.dot
+$ dot -Tpng out.dot > out.png
+```
+生成的图像类似于下面这样：
+
+![eBPF控制流图](image/eBPF控制流图.png)
+
+## 验证辅助函数
+一般不允许直接从 eBPF 程序调用任何内核函数（除非注册为 kfunc），但它可以通过辅助函数间接实现。
+
+不同的辅助函数适用于不同的 BPF 程序类型，如 `bpf_get_current_pid_tgid()` 用于查看触发事件的进程 ID，然而 XDP 程序调用这个函数就没有意义，因为不存在这样的一个进程。当这样调用的时候，验证器会报错：
+```shell
+...
+16: (85) call bpf_get_current_pid_tgid#14
+unknown func bpf_get_current_pid_tgid#14
+```
+unknown 并不说明这个函数不存在，只是对于这种 BPF 程序类型来说，它不应该能够调用这个函数。
+
+## 辅助函数参数
+大多数的辅助函数定义在 kernel/bpf/helpers.c 中，如果查看这个文件会发现每个辅助函数都有一个 bpf_func_proto 结构体，如：
+```c
+const struct bpf_func_proto bpf_map_lookup_elem_proto = {
+    .func = bpf_map_lookup_elem,
+    .gpl_only = false,
+    .pkt_access = true,
+    .ret_type = RET_PTR_TO_MAP_VALUE_OR_NULL,
+    .arg1_type = ARG_CONST_MAP_PTR,
+    .arg2_type = ARG_PTR_TO_MAP_KEY,
+};
+```
+它定义了辅助函数的参数和返回值的约束，从而当向辅助函数传递了错误类型的参数时，验证器可以检测到。例如当进行这样的调用：
+```c
+// 正确的调用应该是 bpf_map_lookup_elem(&my_config, &uid)
+p = bpf_map_lookup_elem(&data, &uid);
+// my_config 是一个 map，data 是一个 data_t 结构体
+```
+这样的代码是可以通过编译并构建出 eBPF 程序的，但是验证器会报错：
+```shell
+27: (85) call bpf_map_lookup_elem#1
+R1 type=fp expected=map_ptr
+```
+这表示在寄存器 1 中的值是帧指针，但是辅助函数期望的是一个 map 指针。
+
+## 检查许可证
+如果使用了要求 GPL 许可证的 BPF 辅助函数，验证器还会检查程序是否有 GPL 兼容的许可。如果没有，验证器会报错：
+```shell
+...
+37: (85) call bpf_probe_read_kernel#113
+cannot call GPL-restricted function from non-GPL compatible program
+```
+直至调用到强制 GPL 许可证的辅助函数时，验证器才会报错。
+
+## 检查内存访问
+验证器会做出大量的检查来保证 BPF 程序只访问它们能够访问的内存。例如 XDP 程序处理网络数据包时只允许访问数据包的内存，大多数 XDP 程序开头都会有这样的代码：
+```c
+SEC("xdp")
+int xdp_load_balancer(struct xdp_md *ctx)
+{
+    void *data = (void *)(long)ctx->data;
+    void *data_end = (void *)(long)ctx->data_end;
+...
+```
+其中上下文信息 `ctx` 包含了数据包，其中的 `data` 和 `data_end` 字段分别指向数据包的开始和结束。验证器将确保内存访问不会超出这个范围。例如以下程序是有效的：
+```c
+SEC("xdp")
+int xdp_hello(struct xdp_md *ctx) {
+    void *data = (void *)(long)ctx->data;
+    void *data_end = (void *)(long)ctx->data_end;
+    bpf_printk("%x", data_end);
+    return XDP_PASS;
+}
+```
+可能恶意程序的编写者会尝试递增 `data_end` 的值，并通过它来访问数据包之外的内存，如：
+```c
+data_end++;
+```
+验证器会检测到这个问题：
+```shell
+; data_end++;
+1: (07) r3 += 1
+R3 pointer arithmetic on pkt_end prohibited
+```
+另外，访问数组时需要确保不会超出数组的范围，考虑示例代码：
+```c
+if (c < sizeof(message)) {
+    char a = message[c];
+    bpf_printk("%c", a);
+}
+```
+这样的代码是安全的，并且会通过验证。但如果不小心写成了：
+```c
+if (c <= sizeof(message)) {
+    char a = message[c];
+    bpf_printk("%c", a);
+}
+```
+验证器会报错：
+```shell
+invalid access to map value, value_size=16 off=16 size=1
+R2 max value is outside of the allowed memory range
+```
+当遇到这个错误的时候，可能需要进一步观察日志信息来找到问题具体在哪里（以下注释从下往上读）：
+```shell
+; if (c <= sizeof(message)) {
+# 寄存器 1 的最大值为 0xc 而 message 的长度为 12 个字节，从而可以确定错误源于 c <= sizeof(message)
+30: (25) if r1 > 0xc goto pc+10
+ R0_w=map_value_or_null(id=2,off=0,ks=4,vs=12,imm=0) R1_w=inv(id=0,
+ umax_value=12,var_off=(0x0; 0xf)) R6=ctx(id=0,off=0,imm=0) ...
+; char a = message[c];
+# 寄存器 2 被设置为一个地址，然后加上寄存器 1 的值。这对应于访问 message[c] 的代码行，因此寄存器 2 被设置为指向 message，然后偏移 c，则 c 保存在寄存器 1 中。
+31: (18) r2 = 0xffff800008e00004
+33: (0f) r2 += r1
+last_idx 33 first_idx 19
+regs=2 stack=0 before 31: (18) r2 = 0xffff800008e00004
+regs=2 stack=0 before 30: (25) if r1 > 0xc goto pc+10
+regs=2 stack=0 before 29: (61) r1 = *(u32 *)(r8 +0)
+# 从错误开始回溯，最后的寄存器状态信息显示寄存器 2 的最大值可为 12
+34: (71) r3 = *(u8 *)(r2 +0)
+ R0_w=map_value_or_null(id=2,off=0,ks=4,vs=12,imm=0) R1_w=invP(id=0,
+ umax_value=12,var_off=(0x0; 0xf)) R2_w=map_value(id=0,off=4,ks=4,vs=16,
+ umax_value=12,var_off=(0x0; 0xf),s32_max_value=15,u32_max_value=15)
+ R6=ctx(id=0,off=0,imm=0) ...
+```
+值得一提的是，message 被定义为全局变量，而全局变量是通过 map 来支持的，所以错误信息是 `invalid access to map value`。
+
+## 在解引用指针之前检查他们
+解引用空指针是 C 程序崩溃的常见原因，因此验证器要求解引用之前检查指针。考虑以下代码：
+```c
+p = bpf_map_lookup_elem(&my_config, &uid);
+```
+这个辅助函数在找不到条目的时候会返回 NULL，如果不检查就直接解引用：
+```c
+char a = p->message[0];
+bpf_printk("%c", a);
+```
+通常它可以通过编译，但验证器会报错：
+```shell
+; p = bpf_map_lookup_elem(&my_config, &uid);
+25: (18) r1 = 0xffff263ec2fe5000
+27: (85) call bpf_map_lookup_elem#1
+# 辅助函数调用的返回值存储在寄存器 0 中。将该值存储到寄存器 7 中，则此时它保存局部变量 p 的值。
+28: (bf) r7 = r0
+; char a = p->message[0];
+# 尝试解引用指针值 p。验证器跟踪寄存器 7 并知道它可能保存指向 map 值的指针或者可能为空
+29: (71) r3 = *(u8 *)(r7 +0)
+# 报错
+R7 invalid mem access 'map_value_or_null'
+```
+不过如果在解引用之前检查指针，验证器就不会拒绝程序：
+```c
+if (p != 0) {
+    char a = p->message[0];
+    bpf_printk("%d", cc);
+}
+```
+有些辅助函数会在使用参数指针之前检查它们，如：
+```c
+long bpf_probe_read_kernel(void *dst, u32 size, const void *unsafe_ptr)
+```
+注意到第三个参数的名字是 `unsafe_ptr`，函数会对它进行检查。
+
+## 访问上下文
+eBPF 程序总会得到一个上下文参数，然而根据程序类型的不同，它能够使用上下文信息的部分是不同的。如果它访问了不应该访问的上下文信息，会遇到 invalid bpf_context access 错误。
+
+## 可运行结束
+验证器会确保 eBPF 程序可以运行结束，否则程序可能持续运行并占有资源。为此，它限制了处理的指令总数，这个限制为一百万条，并且是硬编码到内核中从而不可配置的。
+
+## 循环
+为了确保程序可以结束，在内核版本 5.3 之前对循环做出了限制。一般循环需要通过跳转指令跳转到之前的指令来实现，但是验证器不允许这样做。eBPF 程序员通过使用 #pragma unroll 编译器指令来告诉编译器展开循环，生成若干组相似的指令来代替循环。
+
+从内核版本 5.3 开始，验证器开始支持跟踪循环的分支，从而解除了这个限制。只要不超过处理指令数量的限制循环就可以运行。
+
+内核版本 5.17 引入了一个新的辅助函数 `bpf_loop()` ，它使得验证器能更容易接受循环。该函数把最大迭代次数作为第一个参数，每次迭代执行的函数作为第二个参数，从而验证器只需验证一次循环体。当函数返回非零值，循环提前结束。
+
+还有一个辅助函数 `bpf_for_each_map_elem()`，提供了遍历 map 的功能，对于每个元素调用指定的函数。
+
+## 检查返回值
+eBPF 程序通过寄存器 0 传回返回值，如果函数返回时寄存器 0 没有被初始化，如：
+```c
+SEC("xdp")
+int xdp_hello(struct xdp_md *ctx) {
+    void *data = (void *)(long)ctx->data;
+    void *data_end = (void *)(long)ctx->data_end;
+    // bpf_printk("%x", data_end);
+    // return XDP_PASS;
+}
+```
+验证器会报错，不过只取消 `return XDP_PASS;` 的注释就可以通过验证，因为辅助函数设置了返回值，从而初始化了寄存器 0。
+
+## 不可到达的指令
+验证器会拒绝不可达指令，但一般来说编译器会优化掉这些指令。
