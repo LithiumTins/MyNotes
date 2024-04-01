@@ -395,7 +395,73 @@ Redis 的跳跃表由 redis.h/zskiplistNode 和 redis.h/zskiplist 两个结构�
 ### 跳跃表节点
 跳跃表节点的定义如下
 ```c
+typedef struct zskiplistNode {
+    // 层
+    struct zskiplistLevel {
+        // 前进指针
+        struct zskiplistNode *forward;
 
+        // 跨度
+        unsigned int span;
+    } level[];
+
+    // 后退指针
+    struct zskiplistNode *backward;
+
+    // 分值
+    double score;
+
+    // 成员对象
+    robj *obj;
+} zskiplistNode;
+```
+
+#### 层
+跳跃表节点包含的是一个层数组，其中每个元素都指向一个其他节点，一般来说层的数量越多访问节点的速度越快。
+
+每次创建一个跳跃表节点时，会根据幂次定律（越大的数出现的概率越小）随机生成一个介于 1 和 32 之间的数作为 level 数组的大小，作为层的高度。
+
+每个层都有一个前进指针，指向下一个节点。
+
+层的跨度指出前进指针指向的节点与当前节点的距离。跨度越大，说明节点之间的距离越远。如果前进指针指向的是 NULL ，那么跨度为 0。
+
+当遍历的时候，只使用前进指针，同时不断累加跨度，当找到节点时就知道节点的位置（排位，rank）。
+
+#### 后退指针
+后退指针用于逆向遍历跳跃表，与前进指针一次可能跨越多个节点不同，后退指针只能移动到前一个节点。第一个节点（不是表头节点）的后退指针指向 NULL，标志着遍历结束。
+
+#### 分值和成员
+节点有一个 double 类型的 score，跳跃表中的节点按照 score 从小到大排列。还有一个 obj 指针，指向一个 SDS 字符串对象。每个节点保存的对象需要是唯一的，但是 score 可以相同，此时它们按照成员对象的字典序大小排列。
+
+### 跳跃表
+Redis 使用了一个 zskiplist 结构体来维护跳跃表，它的定义如下：
+```c
+typedef struct zskiplist {
+    // 表头节点和表尾节点
+    struct zskiplistNode *header, *tail;
+
+    // 表中节点的数量
+    unsigned long length;
+
+    // 表中层数最大的节点的层数
+    int level;
+} zskiplist;
+```
+
+## 跳跃表 API
+| 函数 | 作用 | 时间复杂度 |
+| --- | --- | --- |
+| zslCreate | 创建一个跳跃表 | O(1) |
+| zslFree | 释放跳跃表以及所有节点 | O(N) |
+| zslInsert | 向跳跃表中插入给定成员和分值的节点 | 平均 O(logN)，最坏 O(N) |
+| zslDelete | 从跳跃表中删除给定成员和分值的节点 | 平均 O(logN)，最坏 O(N) |
+| zslGetRank | 获取给定成员和分值的节点在跳跃表中的排位 | 平均 O(logN)，最坏 O(N) |
+| zslGetElementByRank | 获取跳跃表中给定排位的节点 | 平均 O(logN)，最坏 O(N) |
+| zslIsInRange | 给定分值范围，检查跳跃表中是否有节点在范围内 | O(1) |
+| zslFirstInRange | 获取跳跃表中第一个分值在给定范围内的节点 | 平均 O(logN)，最坏 O(N) |
+| zslLastInRange | 获取跳跃表中最后一个分值在给定范围内的节点 | 平均 O(logN)，最坏 O(N) |
+| zslDeleteRangeByScore | 删除跳跃表中在给定分值范围内的节点 | O(N)，N为被删除的节点数量 |
+| zslDeleteRangeByRank | 删除跳跃表中在给定排位范围内的节点 | O(N)，N为被删除的节点数量 |
 
 <br><br>
 
