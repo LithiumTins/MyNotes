@@ -1831,3 +1831,243 @@ int xdp_hello(struct xdp_md *ctx) {
 
 ## 不可到达的指令
 验证器会拒绝不可达指令，但一般来说编译器会优化掉这些指令。
+
+<br><br>
+
+# 7 - eBPF 程序和附加类型
+前面见到的程序分别是附加在 kprobe 上的程序和 XDP 网络程序，实际上 uapi/linux/bpf.h 中定义了大约 30 种程序类型以及 40 多种附加类型，附加类型更具体地定义了程序附加的位置。
+
+## 程序上下文参数
+所有 eBPF 程序都接受一个上下文参数，它具体指向的结构取决于触发它的事件类型。程序员需要了解传递给程序的上下文参数的结构，以便正确地访问它。
+
+## 辅助函数和返回值
+上一章中看到，验证器会阻止 eBPF 程序调用不兼容的辅助函数。而实际上程序类型还决定返回值的含义，如 XDP 程序的返回值指示操作系统如何处理数据包（传递到网络栈、丢弃或重定向到其他接口），而对于 kprobe 程序返回值则没有意义。
+
+使用 bpftool feature 命令可以查看当前内核中，它显示系统配置并列出所有可用的程序类型和 map 类型，以及每种程序类型可以调用的辅助函数列表。
+
+辅助函数被视为 UAPI 的一部分，这意味着它们作为一种稳定的内核接口，通常不会轻易更改。
+
+## Kfuncs
+虽然内核内部的函数可能会在不同内核版本之间变化，因此一般验证器并不允许调用它们，但有时依然希望在 eBPF 程序中调用这些函数。
+
+Kfuncs 允许把内部函数注册到 BPF 子系统中，从而验证器允许调用它们。与辅助函数不同，kfunc 不提供兼容性保证，这需要被程序员考虑在其中。
+
+## 跟踪相关类型
+附加到 kprobes、tracepoints、raw tracepoints、fentry/fexit probes 和 perf events 的程序都旨在提供一种高效方式来把跟踪信息传递到用户空间。它们不会影响内核原先对事件的响应模式。
+
+它们有时被称为 “perf 相关” 程序，使用 `bpftool` 可以查看附加到 perf 相关时间的程序：
+```shell
+$ sudo bpftool perf show
+pid 232272 fd 16: prog_id 392 kprobe func __x64_sys_execve offset 0
+pid 232272 fd 17: prog_id 394 kprobe func do_execve offset 0
+pid 232272 fd 19: prog_id 396 tracepoint sys_enter_execve
+pid 232272 fd 20: prog_id 397 raw_tracepoint sched_process_exec
+pid 232272 fd 21: prog_id 398 raw_tracepoint sched_process_exec
+```
+这里的程序有：
+- 附加到 `execve()` 系统调用入口的 kprobe
+- 附加到 `do_execve()` 内核函数的 kprobe
+- 位于 `execve()` 系统调用入口处的 tracepoint
+- 在 `execve()` 处理期间调用的 raw tracepoint 的两个版本，其中一个支持 BTF
+
+要执行与跟踪相关的 eBPF 程序，必须具有 CAP_PERFMON 和 CAP_BPF 权限，或者具有 CAP_SYS_ADMIN 权限。
+
+### Kprobes and Kretprobes
+kprobe 程序几乎可以附加到内核的任何位置，除了 /sys/kernel/debug/kprobes/blacklist 列出的少数部分，内核出于安全考量禁止附加到这些位置。
+
+一般来说会把 kprobes 附加到函数的入口，而 kretprobes 附加到函数的出口。但实际上 kprobes 也可以附加到函数入口后的某条指令，但这样的行为比较不稳定，因为需要确保当前内核版本的函数实现中确实有自己希望附加的那条指令，同时它需要在正确的位置上。
+
+有时候编译器在编译内核的时候会把一些函数内联展开，从而导致 eBPF 程序没有办法找到想要的入口点。
+
+#### 将 kprobes 附加到系统调用入口点
+看一个示例程序 krpobe_sys_execve，它是一个附加到 `execve()` 系统调用的 kprobe，定义如下：
+```c
+SEC("ksyscall/execve")
+int BPF_KPROBE_SYSCALL(kprobe_sys_execve, char *pathname)
+```
+附加到系统调用是很好的选择，因为这些接口是内核的稳定接口，通常不会变化。
+
+#### 将 kprobes 附加到其他内核函数
+除了系统调用，kprobes 也能附加到其他内核函数，比如以下示例把 kprobe 附加到 `do_execve()`，定义如下：
+```c
+SEC("kprobe/do_execve")
+int BPF_KPROBE(do_execve, struct filename *filename)
+```
+这跟上面的示例有一些区别：
+- `SEC()` 中指定的类型是 `kprobe`，但它不需要指定特定的架构版本，因为 `do_execve()` 这样的内核函数大多都是全平台通用的
+- 使用了 `BPF_KPROBE()` 宏而不是 `BPF_KPROBE_SYSCALL()`，两者差不多，只是后者处理系统调用参数
+- 两个参数 `filename` 的类型不同，后者是 `struct filename` 指针，这是内核中的数据结构
+
+实际上 `do_execve()` 有更多的参数：
+```c
+int do_execve(struct filename *filename,
+    const char __user *const __user *__argv,
+    const char __user *const __user *__envp)
+```
+基于 C 语言参数传递的顺序，可以忽略最后的若干个参数。
+
+如上所述，其实需要观察内核函数的定义才能够知道传递什么参数给 eBPF 程序。像 `do_execve()` 这样的，还需要了解 `struct filename` 的定义才知道如何使用它。
+
+在示例中，使用 `filename` 的 `name` 字段：
+```c
+const char *name = BPF_CORE_READ(filename, name);
+bpf_probe_read_kernel(&data.command, sizeof(data.command), name);
+```
+
+实际上系统调用 kprobe 的上下文参数是一个结构体，表示用户空间传递给系统调用的值；非系统调用 kprobe 的上下文参数也是一个结构体，但表示内核中的主调函数传递的参数，形式则取决于内核函数的定义。
+
+### Fentry/Fexit
+Kprobes 和 Kretprobes 是附加到内核函数的一种方式，在内核 5.5 版本引入了 BPF trampoline 的概念以及一种更高效的机制来跟踪进入和退出内核函数的方式，这就是 fentry 和 fexit。新版内核中，fentry/fexit 是首选。
+
+类似于上面跟踪 `do_execve()` 的程序，这里提供 fentry 版本，使用了宏 BPF_PROG 来声明，从而不需要直接操作上下文参数：
+```c
+SEC("fentry/do_execve")
+int BPF_PROG(fentry_execve, struct filename *filename)
+```
+
+fentry/fexit 除了效率更高以外，还有一个优点，当 fexit 附加到退出点时，它可以访问函数的参数，而 kretprobes 只能拿到返回值。比如 kretprobe 的版本如下：
+```c
+SEC("kretprobe/do_unlinkat")
+int BPF_KRETPROBE(do_unlinkat_exit, long ret)
+```
+fexit 的版本如下：
+```c
+SEC("fexit/do_unlinkat")
+int BPF_PROG(do_unlinkat_exit, int dfd, struct filename *filename, long ret)
+```
+
+### 跟踪点（
+跟踪点是内核代码中标记的位置，不是专用于 eBPF 的，长期以来它都被用于生成内核跟踪输出以及类似 SystemTap 的工具中。不像 kprobes 可以附加到任意指令，跟踪点可以看做一组稳定的接口，跨越内核版本得到持续的维护。
+
+内核上可用的跟踪点可以通过 `cat /sys/kernel/tracing/available_events` 查看。附加到跟踪点的程序定义格式为 `SEC("tp/<subsystem>/<name>)`，如跟踪到 `execve()` 系统调用：`SEC("tp/syscalls/sys_enter_execve")`。
+
+接下来需要考虑参数如何定义，先考虑没有 BTF 信息支持的情况，此时需要参考为每个跟踪点提供的对其跟踪的字段格式的描述，以跟踪 `execve()` 入口为例：
+```c
+$ cat /sys/kernel/tracing/events/syscalls/sys_enter_execve/format
+name: sys_enter_execve
+ID: 622
+format:
+    field:unsigned short common_type; offset:0; size:2; signed:0;
+    field:unsigned char common_flags; offset:2; size:1; signed:0;
+    field:unsigned char common_preempt_count; offset:3; size:1; signed:0;
+    field:int common_pid; offset:4; size:4; signed:1;
+    field:int __syscall_nr; offset:8; size:4; signed:1;
+    field:const char * filename; offset:16; size:8; signed:0;
+    field:const char *const * argv; offset:24; size:8; signed:0;
+    field:const char *const * envp; offset:32; size:8; signed:0;
+print fmt: "filename: 0x%08lx, argv: 0x%08lx, envp: 0x%08lx",
+((unsigned long)(REC->filename)), ((unsigned long)(REC->argv)),
+((unsigned long)(REC->envp))
+```
+按照这些信息定义一个结构体：
+```c
+struct my_syscalls_enter_execve {
+    unsigned short common_type;
+    unsigned char common_flags;
+    unsigned char common_preempt_count;
+    int common_pid;
+    long syscall_nr;
+    long filename_ptr;
+    long argv_ptr;
+    long envp_ptr;
+};
+```
+虽然如此，前 4 个字段不被允许访问，否则验证器会报 invalid bpf_context access 错误。有了这个结构体，就可以定义一个跟踪点程序：
+```c
+SEC("tp/syscalls/sys_enter_execve")
+int tp_sys_enter_execve(struct my_syscalls_enter_execve *ctx) {
+```
+可以从中获取文件名指针：
+```c
+bpf_probe_read_user_str(&data.command, sizeof(data.command), ctx->filename_ptr);
+```
+
+使用跟踪点时，传递给 eBPF 的结构体被映射为了一组原始参数，为了性能考虑，实际上可以直接访问这组原始参数。这要求函数用 `raw_tp` 代替 `tp` 来定义，并且程序员需要自己把参数从 `__u64` 类型转换成合适的类型。
+
+### 支持 BTF 的跟踪点
+前一节使用 `my_syscalls_enter_execve` 结构体来访问上下文参数，然而在不同的内核中，这个结构体可能会有所不同。BTF 信息可以解决这个问题，vmlinux.h 中会定义一个与传递给跟踪点 eBPF 程序的上下文结构匹配的结构体。程序使用的节定义为 `SEC("tp_btf/<tracepoint>")`，如：
+```c
+SEC("tp_btf/sched_process_exec")
+int handle_exec(struct trace_event_raw_sched_process_exec *ctx) {
+```
+结构体的名称跟跟踪点名字匹配，前面加上了 `trace_event_raw_` 前缀。
+
+### 附加到用户空间
+实际上在用户空间中也有附加点：uprobes 和 uretprobes 用于附加到用户空间函数的入口和出口，也可以使用用户静态定义的跟踪点（USDTs）来附加到应用程序代码或库中指定的跟踪点。这些程序都使用 BPF_PROG_TYPE_KPROBE 类型。
+
+比如想要将 uprobe 附加到 OpenSSL 中 SSL_write() 函数的开头，可以使用如下的节定义：
+```c
+SEC("uprobe/usr/lib/aarch64-linux-gnu/libssl.so.3/SSL_write")
+```
+节名称所需的格式在 [libbpf 文档](https://docs.kernel.org/bpf/libbpf/program_types.html) 中可以找到。
+
+检测用户空间代码需要注意一些问题：
+- 如本例，共享库的路径可能是特定于架构的
+- 除非机器完全可控，否则很难确定是否有特定的库或程序
+- 应用程序可能是作为独立的二进制文件构建的，从而不会触发共享库中的 uprobe
+- 容器通常有自己的文件系统副本，并自行安装依赖，从而在容器中共享库路径可能不同
+- eBPF 程序可能需要了解应用程序编写使用的语言，有些语言不使用寄存器传递参数，而是使用栈，这样保存寄存器的 pt_args 结构体就没有作用
+
+### LSM
+BPF_PROG_TYPE_LSM 程序附加到 Linux 安全模块 API，这是个稳定接口，最初用来让内核模块强制执行安全策略。
+
+BPF_PROG_TYPE_LSM 程序使用 `bpf(BPF_RAW_TRACEPOINT_OPEN)` 附加，很多时候它们被视为跟踪程序，比较特殊的一点是它们的返回值会影响内核行为。返回非零值表示安全检查不通过，内核会终止正在执行的操作。
+
+## 网络相关类型
+eBPF 程序可以附加到网络协议栈的不同位置，需要有 CAP_NET_ADMIN 和 CAP_BPF 权限，或者有 CAP_SYS_ADMIN 权限。常见的附加位置如图：
+
+![eBPF网络附加位置](image/eBPF网络附加位置.png)
+
+传递给它们的上下文是相关的网络信息，具体类型取决于附加点处可以得到的数据。
+
+网络相关的 eBPF 程序和前面提到的跟踪相关程序类型的一个最大区别是，它们可以干涉联网行为，这涉及两个主要特性：
+- 程序的返回值指示内核如何处理数据包
+- 程序可以修改数据包的内容或套接字配置参数
+
+### 套接字
+在协议栈顶部，有一些 eBPF 程序和套接字相关：
+- BPF_PROG_TYPE_SOCKET_FILTER 是最早进入内核的，它用来过滤套接字数据的**副本**并把结果传递给可观测性工具
+- BPF_PROG_TYPE_SOCK_OPS 可以阻止套接字上发生的各种操作，还可以设置 TCP 超时值等参数
+- BPF_PROG_TYPE_SK_SKB 与一种特殊类型的 map 结合使用，这种 map 可以保存一组套接字引用，从而可以在套接字层把流量重定向到不同的目的地
+
+### 流量控制
+Linux 内核中有一整套与流量控制（Traffic Control）相关的子系统，可以通过 `man tc` 做初步的了解。这里可以附加 eBPF 程序，为出入流量的数据报提供自定义过滤器和分类器。
+
+### XDP
+XDP 即 eXpress Data Path，XDP 程序附加到网络接口上（或虚拟接口），它们可以下载到网卡上执行，前面已经见过了 XDP 程序的例子。
+
+### 流量解析器
+附加在协议栈的各个点，从数据报的头部提取详细信息。BPF_PROG_TYPE_FLOW_DISSECTOR 程序可以实现自定义的数据包解析。
+
+### 轻量级隧道
+BPF_PROG_TYPE_LWT_* 类型的程序用于实现网络封装。
+
+### Cgroups
+即 control groups，Linux 内核中的一个概念，用来限制特定进程或进程组可以访问的资源集。它是容器化使用的机制之一，把 eBPF 程序附加到 cgroup 上可以实现仅适用于该组中进程的自定义行为。
+
+有许多附加到 cgroup 的程序类型，大多都与网络有关，如 BPF_PROG_TYPE_CGROUP_SOCK 和 BPF_PROG_TYPE_CGROUP_SKB，这些程序可以决定是否准许组中进程对套接字操作的请求。还可以欺骗进程，让它们误认为网络正常建立了连接。
+
+还有一种 BPF_CGROUP_SYSCTL 类型，附加到影响特定 cgroup 的 sysctl 命令上。
+
+### 红外控制器
+BPF_PROG_TYPE_LIRC_MODE2 类型的程序附加到红外控制器设备的文件描述符上，实现红外协议的解码。编写书的时候这需要 CAP_NET_ADMIN，但它似乎与网络无关。
+
+## BPF 附加类型
+附加类型为程序附加的位置做了更细粒度的控制。对于某些程序类型，可能只有一种附加类型，则不需要额外指定附加类型。有些程序则必须指定附加类型，它会影响哪些辅助函数可以调用，或是改变对上下文信息访问的限制。
+
+可以在内核函数 `bpf_prog_load_check_attach()` 中找到哪些程序类型需要指定附加类型，它定义在 bpf/syscall.c 中，如对于 CGROUP_SOCK 程序类型的检查：
+```c
+case BPF_PROG_TYPE_CGROUP_SOCK:
+    switch (expected_attach_type) {
+    case BPF_CGROUP_INET_SOCK_CREATE:
+    case BPF_CGROUP_INET_SOCK_RELEASE:
+    case BPF_CGROUP_INET4_POST_BIND:
+    case BPF_CGROUP_INET6_POST_BIND:
+        return 0;
+    default:
+        return -EINVAL;
+    }
+```
+这表示可以附加到：创建套接字时、释放套接字时、IPv4 套接字绑定后、IPv6 套接字绑定后。
+
+或者也可以查看 libbpf 文档，其中还能找到 libbpf 可以理解的程序类型和附加类型的节名称。
