@@ -27,6 +27,7 @@
     - [C++ Primer](语言/C++/C++%20Primer/note)
     - [深度探索C++对象模型](语言/C++/深度探索C++对象模型/note)
   - [Go](语言/Go)
+    - [Go语言实战](语言/Go/Go语言实战/README.md)
     - [Go语言精进之路](语言/Go/Go语言精进之路/README.md)
 - [工具](工具)
   - [Git](工具/Git)
